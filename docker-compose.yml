@@ -1,0 +1,46 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sketchforge-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - MODEL_CACHE_DIR=/app/models
+      - DEVICE=cuda
+      - MOCK_MODE=${MOCK_MODE:-false}
+      - GEMMA_MODEL_ID=google/gemma-4-E4B-it
+      - TRIPOSR_MODEL_ID=stabilityai/TripoSR
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}
+    volumes:
+      - model_cache:/app/models
+      - generated_data:/app/generated
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sketchforge-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+
+volumes:
+  model_cache:
+  generated_data:
