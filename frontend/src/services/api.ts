@@ -12,21 +12,29 @@ export class ApiError extends Error {
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
+  const rawText = await response.text();
+
   if (!response.ok) {
     let errorMessage = `Request failed (${response.status})`;
-    try {
-      const errJson = await response.json();
-      if (errJson.detail) {
-        errorMessage = typeof errJson.detail === 'string' ? errJson.detail : JSON.stringify(errJson.detail);
+    if (rawText) {
+      try {
+        const errJson = JSON.parse(rawText);
+        if (errJson.detail) {
+          errorMessage = typeof errJson.detail === 'string' ? errJson.detail : JSON.stringify(errJson.detail);
+        }
+      } catch {
+        // Non-JSON error body fallback
+        errorMessage = rawText.slice(0, 200);
       }
-    } catch {
-      // Non-JSON error body fallback
-      const text = await response.text();
-      if (text) errorMessage = text.slice(0, 200);
     }
     throw new ApiError(errorMessage, response.status);
   }
-  return response.json() as Promise<T>;
+
+  try {
+    return JSON.parse(rawText) as T;
+  } catch {
+    return rawText as unknown as T;
+  }
 }
 
 export async function checkHealth(): Promise<HealthResponse> {
@@ -67,6 +75,24 @@ export async function startGeneration(
   }
 
   const res = await fetch(`${API_BASE}/generate`, {
+    method: 'POST',
+    body: formData,
+  });
+  return handleResponse<{ job_id: string; status: string }>(res);
+}
+
+export async function generateFromPhoto(
+  imageFile: File | Blob,
+  description?: string
+): Promise<{ job_id: string; status: string }> {
+  const formData = new FormData();
+  const filename = imageFile instanceof File ? imageFile.name : 'photo.jpg';
+  formData.append('image', imageFile, filename);
+  if (description && description.trim()) {
+    formData.append('description', description.trim());
+  }
+
+  const res = await fetch(`${API_BASE}/api/generate-from-photo`, {
     method: 'POST',
     body: formData,
   });

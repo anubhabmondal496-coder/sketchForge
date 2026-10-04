@@ -64,6 +64,29 @@ describe('SketchForge API Service Tests', () => {
     expect(result.status).toBe('queued');
   });
 
+  it('generateFromPhoto submits photo and description to photo generation endpoint', async () => {
+    let capturedUrl = '';
+    let capturedBody: FormData | null = null;
+
+    globalThis.fetch = vi.fn().mockImplementation(async (url, opts) => {
+      capturedUrl = url;
+      capturedBody = opts.body;
+      return {
+        ok: true,
+        json: async () => ({ job_id: 'photo-job-123', status: 'processing' }),
+      };
+    });
+
+    const dummyFile = new File(['fake-photo-data'], 'office_chair.jpg', { type: 'image/jpeg' });
+    const { generateFromPhoto } = await import('../services/api');
+    const result = await generateFromPhoto(dummyFile, 'modern ergonomic office chair');
+
+    expect(capturedUrl).toContain('/api/generate-from-photo');
+    expect(result.job_id).toBe('photo-job-123');
+    expect(result.status).toBe('processing');
+    expect(capturedBody).toBeInstanceOf(FormData);
+  });
+
   it('pollJob retrieves real-time status and telemetry', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,

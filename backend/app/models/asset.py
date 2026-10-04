@@ -7,6 +7,13 @@ class GemmaAnalysisResult(BaseModel):
     search_terms: List[str] = Field(default_factory=list, description="Extracted keywords and queries for asset search")
     style: List[str] = Field(default_factory=list, description="Style keywords (e.g. modern, wooden, minimalist)")
     features: List[str] = Field(default_factory=list, description="Key physical features (e.g. armrests, round base)")
+    components: List[str] = Field(default_factory=list, description="Major physical components")
+    materials: List[str] = Field(default_factory=list, description="Materials (e.g. fabric, plastic, metal)")
+    colors: List[str] = Field(default_factory=list, description="Colors detected or requested")
+    user_modifications: List[str] = Field(default_factory=list, description="User requested modifications")
+    detected_objects: List[str] = Field(default_factory=list, description="All recognizable objects detected in photo")
+    needs_clarification: bool = Field(default=False, description="Whether user needs to clarify between multiple objects")
+    clarification_question: Optional[str] = Field(default=None, description="Clarification prompt for user")
     approximate_scale: Optional[str] = Field(default="human-sized", description="Approximate scale or dimensions")
     confidence: float = Field(default=0.85, ge=0.0, le=1.0, description="Visual reasoning confidence")
 

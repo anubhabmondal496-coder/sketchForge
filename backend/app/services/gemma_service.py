@@ -63,6 +63,46 @@ Output ONLY a strict structured JSON object conforming to:
 Do not expose chain-of-thought. Output valid JSON only.
 """
 
+GEMMA_PHOTO_ANALYSIS_SYSTEM_PROMPT = """You are the Prompting Agent for SketchForge analyzing a reference photo for 3D reconstruction.
+Your task is to understand what the user wants, inspect the photo and optional user description, and produce a structured representation for asset search and 3D generation.
+
+Evaluate:
+1. Object category and subtype.
+2. Major components, visible geometry, approximate proportions, materials, colors, and style.
+3. Multiple objects detection:
+   - If the photo contains multiple distinct foreground objects (e.g. chair, table, laptop) and user description specifies an object (e.g. "Create the chair"), identify that specific object as the primary object.
+   - If multiple distinct objects are present and the user has NOT specified which one to create, list all detected objects in "detected_objects", set "needs_clarification": true, and "clarification_question": "I found multiple objects. Which one should I create?".
+4. Generate 4-6 tiered search queries for 3D asset search:
+   - exact object
+   - common synonym
+   - object + important features
+   - object + style
+   - object + distinguishing characteristic
+5. Do NOT expose chain-of-thought. Output valid JSON only conforming to:
+{
+  "object_type": "office chair",
+  "canonical_name": "chair",
+  "search_terms": [
+    "modern office chair",
+    "desk chair",
+    "office chair tall backrest armrests",
+    "modern ergonomic office chair",
+    "black office chair"
+  ],
+  "style": ["modern", "ergonomic"],
+  "features": ["tall backrest", "armrests", "five-wheel base"],
+  "components": ["seat", "backrest", "two armrests", "central support", "five-wheel base"],
+  "materials": ["fabric", "plastic", "metal"],
+  "colors": ["black"],
+  "user_modifications": [],
+  "detected_objects": ["office chair"],
+  "needs_clarification": false,
+  "clarification_question": null,
+  "approximate_scale": "human-sized",
+  "confidence": 0.95
+}
+"""
+
 class GemmaService:
     def __init__(self):
         self._processor = None
@@ -608,6 +648,11 @@ class GemmaService:
             canonical = "chair"
             features = ["armrests", "five wheels", "high backrest"]
             styles = ["modern", "ergonomic"]
+        elif any(w in desc_lower for w in ["house", "home", "building", "cottage", "cabin", "residence", "villa"]):
+            object_type = "cottage house"
+            canonical = "house"
+            features = ["pitched roof", "chimney", "front door", "windows"]
+            styles = ["suburban", "architectural"]
         elif geom.get("is_lamp"):
             object_type = "desk lamp"
             canonical = "lamp"
@@ -665,6 +710,8 @@ class GemmaService:
             search_terms.extend(["wooden desk", "dining table", "study table"])
         elif canonical == "lamp":
             search_terms.extend(["modern lamp", "table lamp", "study light"])
+        elif canonical == "house":
+            search_terms.extend(["cottage house", "suburban home", "cottage building", "residential house"])
 
         # Deduplicate preserving order
         seen = set()
@@ -683,6 +730,235 @@ class GemmaService:
             features=features,
             approximate_scale="human-sized",
             confidence=0.92
+        )
+
+    def analyze_photo_understanding(
+        self,
+        image_path: Optional[Path],
+        description: Optional[str] = None
+    ) -> GemmaAnalysisResult:
+        """
+        Multimodal Prompting Agent layer for reference photos:
+        Understands the uploaded photo, extracts components, materials, colors, features,
+        and generates tiered search queries for asset search and 3D generation.
+        Handles multiple objects detection and description disambiguation.
+        """
+        start_time = time.time()
+        logger.info(f"Gemma photo understanding started. Image: {image_path}, Description: {description}")
+
+        # Check mock mode or mock photo generation or no CUDA
+        if settings.MOCK_MODE or settings.MOCK_PHOTO_GENERATION or not torch.cuda.is_available():
+            result = self._generate_mock_photo_analysis(image_path, description)
+            logger.info(f"Gemma mock photo understanding completed in {time.time() - start_time:.2f}s")
+            return result
+
+        try:
+            processor, model = self.get_model()
+            user_text_parts = []
+            if description:
+                user_text_parts.append(f"User description: {description.strip()}")
+            user_text_parts.append("Examine the attached photo. Identify the primary object and return the structured visual analysis JSON.")
+
+            user_content = "\n".join(user_text_parts)
+            image = Image.open(image_path).convert("RGB")
+
+            messages = [
+                {"role": "system", "content": GEMMA_PHOTO_ANALYSIS_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": user_content}
+                    ]
+                }
+            ]
+
+            inputs = processor.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt"
+            )
+
+            device = next(model.parameters()).device
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+
+            with torch.no_grad():
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=400,
+                    temperature=0.2,
+                    do_sample=False
+                )
+
+            input_len = inputs["input_ids"].shape[-1]
+            generated_ids = outputs[0][input_len:]
+            raw_text = processor.decode(generated_ids, skip_special_tokens=True)
+
+            res, error = validate_and_parse_gemma_analysis(raw_text)
+            if not res:
+                logger.warning(f"Gemma photo understanding parse error ({error}). Falling back to deterministic analysis.")
+                return self._generate_mock_photo_analysis(image_path, description)
+
+            return res
+
+        except Exception as e:
+            logger.warning(f"Gemma photo analysis error: {e}. Falling back to deterministic analysis.")
+            return self._generate_mock_photo_analysis(image_path, description)
+
+    def _generate_mock_photo_analysis(
+        self,
+        image_path: Optional[Path],
+        description: Optional[str] = None
+    ) -> GemmaAnalysisResult:
+        """
+        Deterministic, intelligent Prompting Agent reasoning for uploaded photos:
+        - Resolves primary object vs multiple objects
+        - Honors user description constraints (e.g. "Create the chair")
+        - Decomposes object into components, materials, colors, and features
+        - Generates 5 tiered search queries
+        """
+        desc_lower = (description or "").lower().strip()
+        geom = self._analyze_image_geometry(image_path)
+
+        # 1. Check for multiple objects in photo or description
+        possible_items = [
+            ("chair", "office chair"),
+            ("table", "dining table"),
+            ("lamp", "desk lamp"),
+            ("laptop", "laptop computer"),
+            ("mug", "ceramic mug"),
+        ]
+
+        found_in_desc = [canon for canon, full in possible_items if canon in desc_lower]
+
+        # Explicit user selection target
+        explicit_target = None
+        for canon, full in possible_items:
+            if f"create the {canon}" in desc_lower or f"make the {canon}" in desc_lower or f"only the {canon}" in desc_lower:
+                explicit_target = canon
+                break
+
+        # Check if multiple objects without clear single selection
+        if len(found_in_desc) > 1 and not explicit_target:
+            return GemmaAnalysisResult(
+                object_type=found_in_desc[0],
+                canonical_name=found_in_desc[0],
+                search_terms=[f"modern {o}" for o in found_in_desc],
+                detected_objects=found_in_desc,
+                needs_clarification=True,
+                clarification_question="I found multiple objects. Which one should I create?",
+                confidence=0.88
+            )
+
+        # 2. Determine target object
+        target_canonical = explicit_target or (found_in_desc[0] if len(found_in_desc) == 1 else None)
+        
+        if not target_canonical:
+            if any(k in desc_lower for k in ["chair", "seat", "stool", "armchair"]):
+                target_canonical = "chair"
+            elif any(k in desc_lower for k in ["table", "desk"]):
+                target_canonical = "table"
+            elif any(k in desc_lower for k in ["lamp", "light", "lantern"]):
+                target_canonical = "lamp"
+            elif any(k in desc_lower for k in ["mug", "cup"]):
+                target_canonical = "mug"
+            elif geom.get("is_lamp"):
+                target_canonical = "lamp"
+            elif geom.get("is_table"):
+                target_canonical = "table"
+            elif geom.get("is_mug"):
+                target_canonical = "mug"
+            else:
+                target_canonical = "chair"
+
+        # 3. Object decomposition defaults
+        if target_canonical == "chair":
+            object_type = "office chair" if ("office" in desc_lower or "gaming" in desc_lower) else "chair"
+            components = ["seat", "backrest", "two armrests", "central support", "five-wheel base"]
+            features = ["high backrest", "armrests", "five wheels"]
+            materials = ["fabric", "plastic", "metal"]
+            colors = ["black"]
+            styles = ["modern", "ergonomic"]
+            synonyms = ["desk chair", "computer chair", "ergonomic chair"]
+        elif target_canonical == "table":
+            object_type = "dining table"
+            components = ["tabletop", "four legs", "support apron"]
+            features = ["four legs", "wooden surface"]
+            materials = ["natural oak wood"]
+            colors = ["natural wood"]
+            styles = ["modern", "minimalist"]
+            synonyms = ["dining table", "wooden desk", "study table"]
+        elif target_canonical == "lamp":
+            object_type = "desk lamp"
+            components = ["circular base", "slender vertical stem", "conical lampshade", "light bulb"]
+            features = ["round base", "adjustable neck", "metal lampshade"]
+            materials = ["brushed metal", "frosted glass"]
+            colors = ["brass", "white"]
+            styles = ["contemporary", "minimalist"]
+            synonyms = ["table lamp", "bedside lamp", "desk light"]
+        else: # mug
+            object_type = "coffee mug"
+            components = ["cylindrical body", "ergonomic handle", "base rim"]
+            features = ["loop handle", "smooth rim"]
+            materials = ["glazed ceramic"]
+            colors = ["white"]
+            styles = ["minimalist"]
+            synonyms = ["tea cup", "ceramic mug", "beverage cup"]
+
+        # 4. Integrate user text modifications
+        user_modifications = []
+        if "taller" in desc_lower:
+            user_modifications.append("increase backrest height slightly" if target_canonical == "chair" else "increase height")
+            if "taller backrest" not in features:
+                features.append("tall backrest")
+        if "leather" in desc_lower:
+            materials = ["genuine leather", "metal"]
+            user_modifications.append("change material to leather")
+        elif "wood" in desc_lower:
+            materials = ["natural wood"]
+            user_modifications.append("change material to wood")
+        elif "metal" in desc_lower:
+            materials = ["polished metal"]
+
+        if "blue" in desc_lower:
+            colors = ["blue"]
+        elif "red" in desc_lower:
+            colors = ["red"]
+        elif "white" in desc_lower:
+            colors = ["white"]
+
+        # 5. Build 5 tiered search queries
+        queries = [
+            f"{styles[0]} {object_type}",
+            object_type,
+            f"{object_type} {features[0]}",
+            f"{styles[0]} {target_canonical}",
+            f"{colors[0]} {object_type}" if colors else synonyms[0]
+        ]
+        seen = set()
+        dedup_queries = []
+        for q in queries:
+            c = q.strip().lower()
+            if c and c not in seen:
+                seen.add(c)
+                dedup_queries.append(c)
+
+        return GemmaAnalysisResult(
+            object_type=object_type,
+            canonical_name=target_canonical,
+            search_terms=dedup_queries[:5],
+            style=styles,
+            features=features,
+            components=components,
+            materials=materials,
+            colors=colors,
+            user_modifications=user_modifications,
+            detected_objects=[object_type],
+            needs_clarification=False,
+            approximate_scale="human-sized",
+            confidence=0.96
         )
 
 gemma_service = GemmaService()

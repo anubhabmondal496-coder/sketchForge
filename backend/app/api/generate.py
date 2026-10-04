@@ -5,7 +5,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Background
 from fastapi.responses import FileResponse
 
 from app.config import settings
-from app.models.job import Job, JobStatus
+from app.models.job import Job, JobStatus, InputType
 from app.services.image_service import image_service
 from app.services.job_service import job_service
 from app.utils.image_processing import safe_path_join
@@ -24,7 +24,7 @@ async def generate_model(
     Returns immediately with a tracked job_id.
     """
     # 1. Initialize tracked job
-    job = job_service.create_job(description=description)
+    job = job_service.create_job(description=description, input_type=InputType.SKETCH)
     job_dir = settings.GENERATED_DIR / job.job_id
 
     try:
@@ -37,7 +37,8 @@ async def generate_model(
             job_service.execute_pipeline,
             job_id=job.job_id,
             input_image_path=raw_path,
-            description=description
+            description=description,
+            input_type=InputType.SKETCH
         )
 
         return {
@@ -45,6 +46,50 @@ async def generate_model(
             "status": job.status
         }
 
+    except HTTPException:
+        job_service.update_job_status(job.job_id, JobStatus.FAILED)
+        raise
+    except Exception as e:
+        job_service.update_job_status(job.job_id, JobStatus.FAILED, error=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/generate-from-photo")
+@router.post("/api/generate-from-photo")
+async def generate_from_photo(
+    background_tasks: BackgroundTasks,
+    image: UploadFile = File(..., description="Uploaded reference photo JPG/PNG/WEBP"),
+    description: Optional[str] = Form(None, description="Optional natural language description")
+):
+    """
+    Submits a reference photograph to the Prompting Agent, Asset Search, and 3D reconstruction pipeline.
+    Validates file format (JPG, JPEG, PNG, WEBP), file size (<= 10MB), and image quality.
+    Returns immediately with a tracked job_id.
+    """
+    job = job_service.create_job(description=description, input_type=InputType.PHOTO)
+    job_dir = settings.GENERATED_DIR / job.job_id
+
+    try:
+        # Validate, decode, and quality check photo
+        raw_path = await image_service.save_uploaded_photo(image, job_dir)
+        job.input_image_path = str(raw_path)
+
+        # Dispatch shared pipeline execution with input_type=InputType.PHOTO
+        background_tasks.add_task(
+            job_service.execute_pipeline,
+            job_id=job.job_id,
+            input_image_path=raw_path,
+            description=description,
+            input_type=InputType.PHOTO
+        )
+
+        return {
+            "job_id": job.job_id,
+            "status": "processing"
+        }
+
+    except HTTPException:
+        job_service.update_job_status(job.job_id, JobStatus.FAILED)
+        raise
     except Exception as e:
         job_service.update_job_status(job.job_id, JobStatus.FAILED, error=str(e))
         raise HTTPException(status_code=400, detail=str(e))
@@ -62,6 +107,7 @@ def get_job_status(job_id: str):
     return job
 
 @router.get("/model/{job_id}")
+@router.get("/models/{job_id}")
 def get_model_file(job_id: str):
     """
     Streams the reconstructed GLB binary model file to the Three.js viewer or user download.

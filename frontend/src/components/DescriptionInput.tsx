@@ -4,6 +4,8 @@ interface DescriptionInputProps {
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
+  placeholder?: string;
+  label?: string;
 }
 
 const SUGGESTIONS = [
@@ -17,6 +19,8 @@ export const DescriptionInput: React.FC<DescriptionInputProps> = ({
   value,
   onChange,
   disabled = false,
+  placeholder,
+  label,
 }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -31,7 +35,7 @@ export const DescriptionInput: React.FC<DescriptionInputProps> = ({
             color: 'var(--text-muted)',
           }}
         >
-          Describe your object <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional)</span>
+          {label || 'Describe your object'} <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional)</span>
         </label>
         {value && (
           <button
@@ -54,7 +58,7 @@ export const DescriptionInput: React.FC<DescriptionInputProps> = ({
       <textarea
         id="description-input"
         rows={2}
-        placeholder="e.g. wooden chair with four legs and a tall backrest"
+        placeholder={placeholder || 'e.g. wooden chair with four legs and a tall backrest'}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}

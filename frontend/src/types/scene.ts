@@ -69,6 +69,10 @@ export interface JobResponse {
   source_type?: 'asset_search' | 'ai_generation';
   asset_metadata?: AssetMetadata;
   search_results?: AssetSearchResult[];
+  input_type?: 'sketch' | 'photo';
+  detected_objects?: string[];
+  needs_clarification?: boolean;
+  clarification_question?: string;
 }
 
 export interface HealthResponse {

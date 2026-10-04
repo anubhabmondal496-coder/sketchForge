@@ -8,17 +8,19 @@ interface GenerationStatusProps {
   error?: string | null;
   generationTime?: number;
   onDismissError?: () => void;
+  detectedObjects?: string[];
+  onSelectObject?: (objectName: string) => void;
 }
 
 const STAGES = [
-  { key: 'idle', label: 'Draw something to begin.' },
+  { key: 'idle', label: 'Draw sketch or upload photo to begin.' },
   { key: 'queued', label: 'Queued for processing' },
-  { key: 'analyzing', label: 'Understanding your sketch...' },
-  { key: 'searching', label: 'Searching 3D assets...' },
-  { key: 'found', label: 'Best matching model found.' },
+  { key: 'analyzing', label: 'Analyzing photo / understanding sketch...' },
+  { key: 'searching', label: 'Searching existing 3D assets...' },
+  { key: 'found', label: 'Found suitable model.' },
   { key: 'downloading', label: 'Preparing model...' },
-  { key: 'importing', label: 'Loading model into workspace...' },
-  { key: 'generating', label: 'No suitable asset found. Generating a new model...' },
+  { key: 'importing', label: 'Loading into 3D viewer...' },
+  { key: 'generating', label: 'Generating 3D model...' },
   { key: 'processing', label: 'Optimizing geometry...' },
   { key: 'completed', label: 'Model ready.' },
   { key: 'ready', label: 'Model ready.' },
@@ -31,6 +33,8 @@ export const GenerationStatus: React.FC<GenerationStatusProps> = ({
   error,
   generationTime,
   onDismissError,
+  detectedObjects,
+  onSelectObject,
 }) => {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
@@ -50,39 +54,71 @@ export const GenerationStatus: React.FC<GenerationStatusProps> = ({
   }, [status]);
 
   if (error) {
+    const isMultiObjectClarification = error.toLowerCase().includes('multiple objects');
+
     return (
       <div
         style={{
-          padding: '10px 14px',
-          background: 'rgba(239, 68, 68, 0.1)',
-          border: '1px solid rgba(239, 68, 68, 0.3)',
+          padding: '12px 14px',
+          background: isMultiObjectClarification ? 'rgba(59, 130, 246, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+          border: `1px solid ${isMultiObjectClarification ? 'rgba(59, 130, 246, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
           borderRadius: '4px',
-          color: '#fca5a5',
+          color: isMultiObjectClarification ? '#93c5fd' : '#fca5a5',
           fontSize: '12px',
           display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: '8px',
+          flexDirection: 'column',
+          gap: '10px',
         }}
       >
-        <div>
-          <strong style={{ color: '#ef4444' }}>Generation Issue: </strong>
-          <span>{error}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+          <div>
+            <strong style={{ color: isMultiObjectClarification ? '#60a5fa' : '#ef4444' }}>
+              {isMultiObjectClarification ? 'Clarification Needed: ' : 'Generation Issue: '}
+            </strong>
+            <span>{error}</span>
+          </div>
+          {onDismissError && (
+            <button
+              type="button"
+              onClick={onDismissError}
+              style={{
+                padding: '2px 6px',
+                fontSize: '11px',
+                background: 'transparent',
+                borderColor: isMultiObjectClarification ? 'rgba(59, 130, 246, 0.4)' : 'rgba(239, 68, 68, 0.4)',
+                color: isMultiObjectClarification ? '#93c5fd' : '#fca5a5',
+              }}
+            >
+              Dismiss
+            </button>
+          )}
         </div>
-        {onDismissError && (
-          <button
-            type="button"
-            onClick={onDismissError}
-            style={{
-              padding: '2px 6px',
-              fontSize: '11px',
-              background: 'transparent',
-              borderColor: 'rgba(239, 68, 68, 0.4)',
-              color: '#fca5a5',
-            }}
-          >
-            Dismiss
-          </button>
+
+        {/* Multi-object selection buttons */}
+        {isMultiObjectClarification && detectedObjects && detectedObjects.length > 0 && onSelectObject && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '2px' }}>
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)', alignSelf: 'center' }}>
+              Select target:
+            </span>
+            {detectedObjects.map((obj) => (
+              <button
+                key={obj}
+                type="button"
+                onClick={() => onSelectObject(obj)}
+                style={{
+                  padding: '4px 10px',
+                  fontSize: '12px',
+                  background: 'var(--bg-surface)',
+                  color: 'var(--text-main)',
+                  borderColor: 'var(--border-strong)',
+                  fontWeight: 600,
+                  textTransform: 'capitalize',
+                }}
+              >
+                Create {obj}
+              </button>
+            ))}
+          </div>
         )}
       </div>
     );

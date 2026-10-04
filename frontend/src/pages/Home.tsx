@@ -9,9 +9,11 @@ import { SceneSpecPanel } from '../components/SceneSpecPanel';
 import { RefinementInput } from '../components/RefinementInput';
 import { LegalModal } from '../components/LegalModal';
 import { AssetPreviewPanel } from '../components/AssetPreviewPanel';
+import { PhotoUpload } from '../components/PhotoUpload';
 import {
   checkHealth,
   startGeneration,
+  generateFromPhoto,
   pollJob,
   refineScene,
   getModelFileUrl,
@@ -35,11 +37,14 @@ export const Home: React.FC = () => {
   const [healthLoading, setHealthLoading] = useState<boolean>(true);
   const [healthError, setHealthError] = useState<string | null>(null);
 
-  // Canvas & Prompt input state
+  // Canvas & Photo input state
   const canvasRef = useRef<SketchCanvasHandle | null>(null);
+  const [inputMode, setInputMode] = useState<'sketch' | 'photo'>('sketch');
   const [hasStrokes, setHasStrokes] = useState<boolean>(false);
+  const [uploadedPhoto, setUploadedPhoto] = useState<File | null>(null);
   const [description, setDescription] = useState<string>('');
   const [lastImageBlob, setLastImageBlob] = useState<Blob | null>(null);
+  const [detectedObjects, setDetectedObjects] = useState<string[]>([]);
 
   const handleStrokeChange = useCallback((has: boolean) => {
     setHasStrokes(has);
@@ -108,6 +113,10 @@ export const Home: React.FC = () => {
           setSearchResults(job.search_results);
         }
 
+        if (job.detected_objects && job.detected_objects.length > 0) {
+          setDetectedObjects(job.detected_objects);
+        }
+
         if (job.status === 'completed' || job.status === 'ready') {
           const modelUrl = job.model_url
             ? (job.model_url.startsWith('http') ? job.model_url : getModelFileUrl(job.job_id))
@@ -157,11 +166,36 @@ export const Home: React.FC = () => {
     poll();
   };
 
-  // Step 1 -> Generate 3D Model
+  // Step 1 -> Generate 3D Model (Supports both Draw Sketch and Upload Photo)
   const handleGenerate = async () => {
-    if (!canvasRef.current) return;
     setPipelineError(null);
+    setDetectedObjects([]);
 
+    if (inputMode === 'photo') {
+      if (!uploadedPhoto) {
+        setPipelineError('No reference photo selected. Please upload or drop an image.');
+        return;
+      }
+
+      setLastImageBlob(uploadedPhoto);
+      setJobStatus('queued');
+      setStageMessage('Initiating photo reconstruction...');
+      setGenerationTime(undefined);
+
+      try {
+        const response = await generateFromPhoto(uploadedPhoto, description);
+        setActiveJobId(response.job_id);
+        setHistory([]);
+        pollJobStatus(response.job_id, undefined, 0);
+      } catch (err: any) {
+        setPipelineError(err.message || 'Failed to submit generation job.');
+        setJobStatus('failed');
+      }
+      return;
+    }
+
+    // Sketch mode
+    if (!canvasRef.current) return;
     const imageBlob = await canvasRef.current.getBlob();
     if (!imageBlob || canvasRef.current.isEmpty()) {
       setPipelineError('Canvas is empty. Draw a rough sketch before generating.');
@@ -181,6 +215,31 @@ export const Home: React.FC = () => {
     } catch (err: any) {
       setPipelineError(err.message || 'Failed to submit generation job.');
       setJobStatus('failed');
+    }
+  };
+
+  // Multi-object clarification selection
+  const handleSelectClarifiedObject = async (objName: string) => {
+    const explicitDesc = `Create the ${objName}`;
+    setDescription(explicitDesc);
+    setPipelineError(null);
+    setDetectedObjects([]);
+
+    if (inputMode === 'photo' && uploadedPhoto) {
+      setLastImageBlob(uploadedPhoto);
+      setJobStatus('queued');
+      setStageMessage(`Creating ${objName}...`);
+      setGenerationTime(undefined);
+
+      try {
+        const response = await generateFromPhoto(uploadedPhoto, explicitDesc);
+        setActiveJobId(response.job_id);
+        setHistory([]);
+        pollJobStatus(response.job_id, undefined, 0);
+      } catch (err: any) {
+        setPipelineError(err.message || 'Failed to submit generation job.');
+        setJobStatus('failed');
+      }
     }
   };
 
@@ -277,24 +336,74 @@ export const Home: React.FC = () => {
 
       <main className="main-workspace">
         {/* Left Column: Sketch & Description (Input Forge) */}
+        {/* Left Column: Sketch & Description / Photo Upload (Input Forge) */}
         <div className="column-card">
-          <div className="panel-header">
-            <div className="panel-title">
+          <div className="panel-header" style={{ padding: '8px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span className="step-badge">1</span>
-              <span>Sketch &amp; Prompt</span>
+              <div
+                style={{
+                  display: 'flex',
+                  gap: '2px',
+                  background: 'var(--bg-app)',
+                  padding: '2px',
+                  borderRadius: '4px',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setInputMode('sketch')}
+                  style={{
+                    background: inputMode === 'sketch' ? 'var(--bg-surface)' : 'transparent',
+                    color: inputMode === 'sketch' ? 'var(--text-main)' : 'var(--text-muted)',
+                    borderColor: inputMode === 'sketch' ? 'var(--border-strong)' : 'transparent',
+                    fontSize: '12px',
+                    fontWeight: inputMode === 'sketch' ? 600 : 400,
+                    padding: '3px 10px',
+                    borderRadius: '3px',
+                  }}
+                >
+                  Draw Sketch
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInputMode('photo')}
+                  style={{
+                    background: inputMode === 'photo' ? 'var(--bg-surface)' : 'transparent',
+                    color: inputMode === 'photo' ? 'var(--text-main)' : 'var(--text-muted)',
+                    borderColor: inputMode === 'photo' ? 'var(--border-strong)' : 'transparent',
+                    fontSize: '12px',
+                    fontWeight: inputMode === 'photo' ? 600 : 400,
+                    padding: '3px 10px',
+                    borderRadius: '3px',
+                  }}
+                >
+                  Upload Photo
+                </button>
+              </div>
             </div>
             <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
-              2D User Input
+              {inputMode === 'sketch' ? '2D Drawing Canvas' : 'Reference Image'}
             </span>
           </div>
 
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-            {/* Sketch Canvas */}
-            <div style={{ flex: 1, minHeight: '380px' }}>
-              <SketchCanvas
-                ref={canvasRef}
-                onStrokeChange={handleStrokeChange}
-              />
+            {/* Input Canvas / Photo Upload Area */}
+            <div style={{ flex: 1, minHeight: '380px', position: 'relative' }}>
+              <div style={{ display: inputMode === 'sketch' ? 'block' : 'none', height: '100%' }}>
+                <SketchCanvas
+                  ref={canvasRef}
+                  onStrokeChange={handleStrokeChange}
+                />
+              </div>
+              {inputMode === 'photo' && (
+                <PhotoUpload
+                  onPhotoSelected={setUploadedPhoto}
+                  selectedPhoto={uploadedPhoto}
+                  disabled={isGenerating}
+                />
+              )}
             </div>
 
             {/* Input Controls */}
@@ -312,11 +421,17 @@ export const Home: React.FC = () => {
                 value={description}
                 onChange={setDescription}
                 disabled={isGenerating}
+                label={inputMode === 'photo' ? 'Describe key details' : 'Describe your object'}
+                placeholder={
+                  inputMode === 'photo'
+                    ? 'Describe anything important about the object that may not be obvious from the image.'
+                    : 'e.g. wooden chair with four legs and a tall backrest'
+                }
               />
 
               <GenerateButton
                 onClick={handleGenerate}
-                disabled={!hasStrokes}
+                disabled={inputMode === 'sketch' ? !hasStrokes : !uploadedPhoto}
                 isLoading={isGenerating}
               />
 
@@ -327,6 +442,8 @@ export const Home: React.FC = () => {
                 error={pipelineError}
                 generationTime={generationTime}
                 onDismissError={() => setPipelineError(null)}
+                detectedObjects={detectedObjects}
+                onSelectObject={handleSelectClarifiedObject}
               />
             </div>
           </div>

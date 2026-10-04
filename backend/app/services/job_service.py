@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from app.config import settings
-from app.models.job import Job, JobStatus
+from app.models.job import Job, JobStatus, InputType, CreationInput
 from app.models.scene_spec import SceneSpec
 from app.models.asset import AssetMetadata, AssetSearchResult
 from app.services.gemma_service import gemma_service
@@ -27,7 +27,8 @@ class JobService:
     def create_job(
         self,
         description: Optional[str] = None,
-        refinement_prompt: Optional[str] = None
+        refinement_prompt: Optional[str] = None,
+        input_type: InputType = InputType.SKETCH
     ) -> Job:
         """Creates a new tracked generation job and its storage directory."""
         job_id = str(uuid.uuid4())
@@ -39,10 +40,11 @@ class JobService:
             status=JobStatus.QUEUED,
             stage_message="Job queued for processing",
             description=description,
-            refinement_prompt=refinement_prompt
+            refinement_prompt=refinement_prompt,
+            input_type=input_type
         )
         self._jobs[job_id] = job
-        logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] job={job_id} created status=queued")
+        logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] job={job_id} created status=queued input_type={input_type.value}")
         return job
 
     def get_job(self, job_id: str) -> Optional[Job]:
@@ -69,14 +71,17 @@ class JobService:
         input_image_path: Path,
         description: Optional[str] = None,
         existing_spec: Optional[SceneSpec] = None,
-        refinement_prompt: Optional[str] = None
+        refinement_prompt: Optional[str] = None,
+        input_type: InputType = InputType.SKETCH
     ):
         """
-        Executes the full SketchForge generation pipeline asynchronously:
-        1. Preprocess user sketch
-        2. Gemma 4 E4B multimodal reasoning -> SceneSpec JSON
-        3. TripoSR image-to-3D reconstruction -> GLB mesh
-        4. Measure timings and update job state
+        Executes the shared SketchForge generation pipeline asynchronously for both
+        sketch and reference photo inputs:
+        1. Preprocess input (sketch normalization or photo contrast/scale preservation)
+        2. Gemma 4 E4B Prompting Agent multimodal reasoning -> Object understanding & queries
+        3. Multi-provider 3D asset search & automatic legal import
+        4. TripoSR image-to-3D reconstruction fallback -> GLB mesh
+        5. Measure timings and update job state
         """
         job = self.get_job(job_id)
         if not job:
@@ -87,35 +92,66 @@ class JobService:
 
         try:
             # Stage 1: Image Preprocessing
+            initial_stage_msg = "Analyzing photo..." if input_type == InputType.PHOTO else "Understanding your sketch..."
             self.update_job_status(
                 job_id,
                 JobStatus.ANALYZING,
-                stage_message="Understanding your sketch..."
+                stage_message=initial_stage_msg
             )
-            # Run image prep in thread
-            processed_image_path = await asyncio.to_thread(
-                image_service.prepare_for_inference,
-                input_image_path,
-                job_dir
-            )
+            # Run image prep in thread based on input type
+            if input_type == InputType.PHOTO:
+                processed_image_path = await asyncio.to_thread(
+                    image_service.prepare_photo_for_inference,
+                    input_image_path,
+                    job_dir
+                )
+            else:
+                processed_image_path = await asyncio.to_thread(
+                    image_service.prepare_for_inference,
+                    input_image_path,
+                    job_dir
+                )
             job.processed_image_path = str(processed_image_path)
 
-            # Stage 2: Gemma 4 E4B Multimodal Reasoning & Understanding
+            # Stage 2: Prompting Agent Multimodal Reasoning & Understanding
             now_str = datetime.now().strftime('%H:%M:%S')
-            logger.info(f"[{now_str}] job={job_id} stage=gemma started")
+            logger.info(f"[{now_str}] job={job_id} stage=gemma started (input_type={input_type.value})")
             self.update_job_status(
                 job_id,
                 JobStatus.ANALYZING,
-                stage_message="Understanding your sketch with Gemma 4 E4B..."
+                stage_message="Understanding object..."
             )
 
             # Step 1: Visual reasoning & search query generation
-            gemma_analysis = await asyncio.to_thread(
-                gemma_service.analyze_sketch_understanding,
-                processed_image_path,
-                description
-            )
-            logger.info(f"[{now_str}] job={job_id} Gemma visual analysis: object={gemma_analysis.object_type}, terms={gemma_analysis.search_terms}")
+            if input_type == InputType.PHOTO:
+                gemma_analysis = await asyncio.to_thread(
+                    gemma_service.analyze_photo_understanding,
+                    processed_image_path,
+                    description
+                )
+            else:
+                gemma_analysis = await asyncio.to_thread(
+                    gemma_service.analyze_sketch_understanding,
+                    processed_image_path,
+                    description
+                )
+
+            job.detected_objects = gemma_analysis.detected_objects
+            job.needs_clarification = gemma_analysis.needs_clarification
+            job.clarification_question = gemma_analysis.clarification_question
+
+            # If multiple objects require user clarification
+            if gemma_analysis.needs_clarification:
+                clarif_q = gemma_analysis.clarification_question or "I found multiple objects. Which one should I create?"
+                self.update_job_status(
+                    job_id,
+                    JobStatus.FAILED,
+                    stage_message=clarif_q,
+                    error=clarif_q
+                )
+                return
+
+            logger.info(f"[{now_str}] job={job_id} Prompting Agent analysis: object={gemma_analysis.object_type}, terms={gemma_analysis.search_terms}")
 
             # Also generate SceneSpec for geometry fallback/refinement
             scene_spec = await asyncio.to_thread(

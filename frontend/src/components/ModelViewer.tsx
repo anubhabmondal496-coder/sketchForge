@@ -201,25 +201,42 @@ export const ModelViewer: React.FC<ModelViewerProps> = ({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {sourceType === 'asset_search' ? (
-            <span
-              style={{
-                fontSize: '10px',
-                background: 'rgba(16, 185, 129, 0.15)',
-                color: '#34d399',
-                padding: '2px 8px',
-                borderRadius: '10px',
-                fontWeight: 600,
-                border: '1px solid rgba(16, 185, 129, 0.3)',
-              }}
-            >
-              Imported 3D Asset
-            </span>
-          ) : generationTime !== undefined ? (
+          {modelUrl && (
+            sourceType === 'asset_search' ? (
+              <span
+                style={{
+                  fontSize: '11px',
+                  background: 'rgba(16, 185, 129, 0.15)',
+                  color: '#34d399',
+                  padding: '2px 8px',
+                  borderRadius: '3px',
+                  fontWeight: 600,
+                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                }}
+              >
+                Source: 3D Asset
+              </span>
+            ) : (
+              <span
+                style={{
+                  fontSize: '11px',
+                  background: 'rgba(59, 130, 246, 0.15)',
+                  color: '#60a5fa',
+                  padding: '2px 8px',
+                  borderRadius: '3px',
+                  fontWeight: 600,
+                  border: '1px solid rgba(59, 130, 246, 0.3)',
+                }}
+              >
+                Source: AI Generated
+              </span>
+            )
+          )}
+          {generationTime !== undefined && (
             <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
-              Reconstructed in {generationTime.toFixed(1)}s
+              ({generationTime.toFixed(1)}s)
             </span>
-          ) : null}
+          )}
 
           <button
             type="button"

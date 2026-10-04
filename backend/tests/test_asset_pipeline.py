@@ -62,6 +62,20 @@ def test_lamp_search():
     assert "lamp" in top.name.lower() or "lamp" in top.id.lower()
     assert top.score > 0.7
 
+# 3b. House search
+def test_house_search():
+    results = anyio.run(
+        asset_search_service.search_all,
+        "cottage house",
+        ["cottage house", "suburban home", "cottage building"],
+        ["pitched roof", "chimney", "windows"]
+    )
+    assert len(results) > 0
+    top = results[0]
+    assert "house" in top.name.lower() or "house" in top.id.lower()
+    assert top.score > 0.75
+
+
 # 4. Unknown object & 5. No search results
 def test_unknown_object_no_results():
     results = anyio.run(

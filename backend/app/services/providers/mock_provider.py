@@ -52,6 +52,18 @@ class MockAssetProvider(BaseAssetProvider):
             "attribution": "Public Domain 3D Lamp Asset (SketchForge Test Assets)",
             "thumbnail_url": "/test-models/lamp_thumb.png",
         },
+        {
+            "id": "mock_house_01",
+            "name": "Suburban Cottage House with Pitched Roof",
+            "keywords": ["house", "home", "building", "cottage", "cabin", "residence", "villa", "roof"],
+            "features": ["pitched roof", "chimney", "front door", "windows"],
+            "style": ["suburban", "architectural", "cottage"],
+            "filename": "house.glb",
+            "author": "SketchForge Open Architecture",
+            "license": "CC0 Public Domain",
+            "attribution": "Public Domain 3D House Asset (SketchForge Architecture)",
+            "thumbnail_url": "/test-models/house_thumb.png",
+        },
     ]
 
     @property

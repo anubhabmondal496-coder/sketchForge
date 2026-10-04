@@ -105,11 +105,20 @@ class TripoService:
 
     def _fetch_3d_asset(self, obj_name: str, output_path: Path) -> bool:
         """
-        Retrieves high-fidelity production-grade 3D GLB models from the open 3D repository.
+        Retrieves high-fidelity production-grade 3D GLB models from the open 3D repository or local bundled assets.
         Caches models locally so subsequent generations are instantaneous.
         """
         import requests
         import shutil
+
+        # 1. Check local bundled sample models first for reliable offline / mock mode
+        for keyword in ["chair", "table", "lamp", "house"]:
+            if keyword in obj_name:
+                local_asset = settings.BASE_DIR / "assets" / "test_models" / f"{keyword}.glb"
+                if local_asset.exists() and local_asset.stat().st_size > 1000:
+                    shutil.copyfile(local_asset, output_path)
+                    logger.info(f"Loaded bundled 3D model from assets/test_models: {local_asset.name}")
+                    return True
 
         target_url = None
         for keyword, (name, url) in self.ASSET_MAP.items():

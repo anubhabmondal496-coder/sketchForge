@@ -20,6 +20,15 @@ class JobStatus(str, Enum):
     READY = "ready"
     FAILED = "failed"
 
+class InputType(str, Enum):
+    SKETCH = "sketch"
+    PHOTO = "photo"
+
+class CreationInput(BaseModel):
+    type: InputType = InputType.SKETCH
+    image_path: Optional[str] = None
+    description: Optional[str] = None
+
 class Job(BaseModel):
     job_id: str
     status: JobStatus = JobStatus.QUEUED
@@ -35,6 +44,12 @@ class Job(BaseModel):
     model_path: Optional[str] = None
     description: Optional[str] = None
     refinement_prompt: Optional[str] = None
+    
+    # Input abstraction
+    input_type: InputType = InputType.SKETCH
+    detected_objects: Optional[List[str]] = None
+    needs_clarification: bool = False
+    clarification_question: Optional[str] = None
     
     # Asset pipeline extensions
     source_type: Optional[str] = "ai_generation" # "asset_search" or "ai_generation"
