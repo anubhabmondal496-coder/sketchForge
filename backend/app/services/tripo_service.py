@@ -344,6 +344,62 @@ class TripoService:
                     rest.apply_translation([ax, 0, seat_h + arm_h])
                     parts.append(rest)
 
+        elif any(k in obj_name for k in ["house", "home", "building", "cottage", "cabin", "villa"]):
+            # Parametric 3D House reconstruction from sketch CV geometry
+            w = geo.width if (geo and geo.width) else 2.0
+            d = geo.depth if (geo and geo.depth) else 1.6
+            h = geo.height if (geo and geo.height) else 1.85
+            wall_h = h * 0.65
+            roof_h = h - wall_h
+
+            # 1. Main building walls
+            walls = trimesh.creation.box(extents=[w, d, wall_h])
+            walls.apply_translation([0, 0, wall_h / 2])
+            walls.visual.vertex_colors = [235, 225, 210, 255]
+            parts.append(walls)
+
+            # 2. Pitched gable roof
+            hw = w / 2 + 0.15
+            hd = d / 2 + 0.1
+            roof_verts = np.array([
+                [-hw, -hd, wall_h],
+                [ hw, -hd, wall_h],
+                [-hw,  hd, wall_h],
+                [ hw,  hd, wall_h],
+                [ 0.0, -hd, h],
+                [ 0.0,  hd, h],
+            ])
+            roof_faces = np.array([
+                [0, 1, 4], [3, 2, 5],
+                [0, 4, 5], [0, 5, 2],
+                [1, 3, 5], [1, 5, 4],
+                [0, 2, 3], [0, 3, 1],
+            ])
+            roof_mesh = trimesh.Trimesh(vertices=roof_verts, faces=roof_faces)
+            roof_mesh.visual.vertex_colors = [180, 50, 40, 255]
+            parts.append(roof_mesh)
+
+            # 3. Chimney
+            chimney = trimesh.creation.box(extents=[0.25 * (w/2), 0.25 * (d/2), roof_h * 0.9])
+            chimney.apply_translation([w * 0.28, d * 0.12, wall_h + roof_h * 0.5])
+            chimney.visual.vertex_colors = [150, 60, 50, 255]
+            parts.append(chimney)
+
+            # 4. Front door
+            door = trimesh.creation.box(extents=[w * 0.22, 0.05, wall_h * 0.65])
+            door.apply_translation([0, -d/2 - 0.02, wall_h * 0.325])
+            door.visual.vertex_colors = [120, 70, 30, 255]
+            parts.append(door)
+
+            # 5. Dual front windows
+            win_w = w * 0.18
+            win_h = wall_h * 0.35
+            for wx in [-w * 0.3, w * 0.3]:
+                win = trimesh.creation.box(extents=[win_w, 0.05, win_h])
+                win.apply_translation([wx, -d/2 - 0.02, wall_h * 0.6])
+                win.visual.vertex_colors = [135, 206, 235, 255]
+                parts.append(win)
+
         else:
             # Arbitrary / Custom Prompted Object or Freehand Sketch:
             # Generate custom 3D geometry matching the SceneSpec dimensions

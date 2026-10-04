@@ -373,6 +373,10 @@ class GemmaService:
                 # Mug signature: Compact / square aspect ratio, balanced middle mass, not slender stem
                 is_mug = (0.75 <= aspect <= 1.25 and mid_pct >= 0.25 and not is_lamp)
 
+                # House signature: Triangular gable roof mass at top, substantial square/rectangular base
+                # Top third is tapering (pitched roof) and bottom two-thirds forms walls/base (aspect between 0.8 and 1.5)
+                is_house = (0.8 <= aspect <= 1.5 and top_pct >= 0.20 and bot_pct >= 0.30 and not is_lamp)
+
                 return {
                     "aspect_ratio": aspect,
                     "is_wide": aspect > 1.25,
@@ -383,6 +387,7 @@ class GemmaService:
                     "is_lamp": is_lamp,
                     "is_table": is_table,
                     "is_mug": is_mug,
+                    "is_house": is_house,
                 }
         except Exception as e:
             logger.warning(f"Error computing visual geometry heuristics: {e}")
@@ -526,6 +531,17 @@ class GemmaService:
                 geometry=SceneGeometry(width=0.12, depth=0.09, height=0.12),
                 generation_prompt="A ceramic stoneware coffee mug with smooth matte glaze and ergonomic loop handle."
             )
+        elif geom.get("is_house"):
+            # House silhouette: pitched roof gable with rectangular wall foundation
+            return SceneSpec(
+                object="house",
+                confidence=0.95,
+                style="suburban cottage",
+                material="brick masonry and terracotta roof",
+                components=["pitched roof", "brick chimney", "entrance door", "paned windows", "porch step"],
+                geometry=SceneGeometry(width=2.0, depth=1.6, height=1.85),
+                generation_prompt="A detailed 3D suburban cottage house with a triangular pitched roof, brick chimney, and entrance door."
+            )
         else:
             # Default or tall balanced silhouette -> Chair / Seating
             return SceneSpec(
@@ -666,6 +682,11 @@ class GemmaService:
             canonical = "mug"
             features = ["handle", "cup body"]
             styles = ["ceramic"]
+        elif geom.get("is_house"):
+            object_type = "cottage house"
+            canonical = "house"
+            features = ["pitched roof", "chimney", "front door", "windows"]
+            styles = ["suburban", "architectural"]
 
         # Style detection from description
         if "wood" in desc_lower or "wooden" in desc_lower:

@@ -17,6 +17,7 @@ describe('SketchForge API Service Tests', () => {
 
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
+      text: async () => JSON.stringify(mockHealth),
       json: async () => mockHealth,
     } as any);
 
@@ -41,6 +42,7 @@ describe('SketchForge API Service Tests', () => {
       capturedBody = opts.body;
       return {
         ok: true,
+        text: async () => JSON.stringify(mockSpec),
         json: async () => mockSpec,
       };
     });
@@ -53,9 +55,11 @@ describe('SketchForge API Service Tests', () => {
   });
 
   it('startGeneration initiates tracked async job', async () => {
+    const jobData = { job_id: 'job-987', status: 'queued' };
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ job_id: 'job-987', status: 'queued' }),
+      text: async () => JSON.stringify(jobData),
+      json: async () => jobData,
     } as any);
 
     const dummyBlob = new Blob(['test-image'], { type: 'image/png' });
@@ -67,13 +71,15 @@ describe('SketchForge API Service Tests', () => {
   it('generateFromPhoto submits photo and description to photo generation endpoint', async () => {
     let capturedUrl = '';
     let capturedBody: FormData | null = null;
+    const photoJob = { job_id: 'photo-job-123', status: 'processing' };
 
     globalThis.fetch = vi.fn().mockImplementation(async (url, opts) => {
       capturedUrl = url;
       capturedBody = opts.body;
       return {
         ok: true,
-        json: async () => ({ job_id: 'photo-job-123', status: 'processing' }),
+        text: async () => JSON.stringify(photoJob),
+        json: async () => photoJob,
       };
     });
 
@@ -88,14 +94,16 @@ describe('SketchForge API Service Tests', () => {
   });
 
   it('pollJob retrieves real-time status and telemetry', async () => {
+    const pollData = {
+      job_id: 'job-987',
+      status: 'completed',
+      generation_time: 12.4,
+      model_url: '/model/job-987',
+    };
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({
-        job_id: 'job-987',
-        status: 'completed',
-        generation_time: 12.4,
-        model_url: '/model/job-987',
-      }),
+      text: async () => JSON.stringify(pollData),
+      json: async () => pollData,
     } as any);
 
     const result = await pollJob('job-987');
@@ -120,6 +128,7 @@ describe('SketchForge API Service Tests', () => {
 
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
+      text: async () => JSON.stringify(mockResults),
       json: async () => mockResults,
     } as any);
 
@@ -147,6 +156,7 @@ describe('SketchForge API Service Tests', () => {
 
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
+      text: async () => JSON.stringify(mockImport),
       json: async () => mockImport,
     } as any);
 

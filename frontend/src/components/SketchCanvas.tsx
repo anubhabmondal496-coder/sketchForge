@@ -4,7 +4,7 @@ export interface SketchCanvasHandle {
   getBlob: () => Promise<Blob | null>;
   isEmpty: () => boolean;
   clear: () => void;
-  loadPreset: (type: 'chair' | 'table' | 'lamp' | 'mug') => void;
+  loadPreset: (type: 'chair' | 'table' | 'lamp' | 'mug' | 'house') => void;
 }
 
 interface Point {
@@ -200,7 +200,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
       setRedoStack([]);
     };
 
-    const loadPreset = (type: 'chair' | 'table' | 'lamp' | 'mug') => {
+    const loadPreset = (type: 'chair' | 'table' | 'lamp' | 'mug' | 'house') => {
       const cx = CANVAS_RES / 2;
       const cy = CANVAS_RES / 2;
 
@@ -242,6 +242,21 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
           { points: [{ x: cx - 90, y: cy - 100 }, { x: cx + 90, y: cy - 100 }, { x: cx + 80, y: cy + 100 }, { x: cx - 80, y: cy + 100 }, { x: cx - 90, y: cy - 100 }], size: 10, isEraser: false },
           { points: [{ x: cx - 90, y: cy - 100 }, { x: cx, y: cy - 80 }, { x: cx + 90, y: cy - 100 }], size: 6, isEraser: false },
           { points: [{ x: cx + 86, y: cy - 60 }, { x: cx + 150, y: cy - 20 }, { x: cx + 150, y: cy + 40 }, { x: cx + 78, y: cy + 70 }], size: 10, isEraser: false },
+        ];
+      } else if (type === 'house') {
+        presetStrokes = [
+          // Gable roof triangle
+          { points: [{ x: cx, y: cy - 200 }, { x: cx - 170, y: cy - 40 }, { x: cx + 170, y: cy - 40 }, { x: cx, y: cy - 200 }], size: 9, isEraser: false },
+          // Main house rectangular body
+          { points: [{ x: cx - 150, y: cy - 40 }, { x: cx - 150, y: cy + 180 }, { x: cx + 150, y: cy + 180 }, { x: cx + 150, y: cy - 40 }], size: 9, isEraser: false },
+          // Chimney on top right of roof
+          { points: [{ x: cx + 80, y: cy - 120 }, { x: cx + 80, y: cy - 180 }, { x: cx + 120, y: cy - 180 }, { x: cx + 120, y: cy - 80 }], size: 8, isEraser: false },
+          // Front door
+          { points: [{ x: cx - 35, y: cy + 180 }, { x: cx - 35, y: cy + 70 }, { x: cx + 35, y: cy + 70 }, { x: cx + 35, y: cy + 180 }], size: 7, isEraser: false },
+          // Left window
+          { points: [{ x: cx - 120, y: cy + 10 }, { x: cx - 60, y: cy + 10 }, { x: cx - 60, y: cy + 70 }, { x: cx - 120, y: cy + 70 }, { x: cx - 120, y: cy + 10 }], size: 6, isEraser: false },
+          // Right window
+          { points: [{ x: cx + 60, y: cy + 10 }, { x: cx + 120, y: cy + 10 }, { x: cx + 120, y: cy + 70 }, { x: cx + 60, y: cy + 70 }, { x: cx + 60, y: cy + 10 }], size: 6, isEraser: false },
         ];
       }
 
@@ -458,6 +473,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
               style={{ fontSize: '11px', padding: '2px 8px' }}
             >
               Mug
+            </button>
+            <button
+              type="button"
+              onClick={() => loadPreset('house')}
+              style={{
+                fontSize: '11px',
+                padding: '2px 8px',
+                borderColor: 'var(--accent)',
+                color: 'var(--accent)',
+                fontWeight: 600
+              }}
+            >
+              House 🏠
             </button>
           </div>
         </div>
