@@ -50,6 +50,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, type, onClose })
             {type === 'privacy' ? 'Privacy Policy' : 'Terms of Service'}
           </h2>
           <button
+            type="button"
             onClick={onClose}
             style={{
               padding: '2px 8px',
@@ -121,7 +122,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, type, onClose })
             justifyContent: 'flex-end',
           }}
         >
-          <button onClick={onClose}>Close</button>
+          <button type="button" onClick={onClose}>Close</button>
         </div>
       </div>
     </div>

@@ -13,6 +13,7 @@ export const GenerateButton: React.FC<GenerateButtonProps> = ({
 }) => {
   return (
     <button
+      type="button"
       className="primary"
       onClick={onClick}
       disabled={disabled || isLoading}

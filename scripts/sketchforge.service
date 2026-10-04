@@ -1,0 +1,20 @@
+[Unit]
+Description=SketchForge FastAPI Daemon (NVIDIA RTX 4000 Ada)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/SketchForge/backend
+EnvironmentFile=/root/SketchForge/.env
+ExecStart=/root/SketchForge/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Process & Memory hygiene
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

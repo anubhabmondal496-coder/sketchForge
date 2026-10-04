@@ -15,7 +15,7 @@ describe('SketchForge API Service Tests', () => {
       mock_mode: false,
     };
 
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => mockHealth,
     } as any);
@@ -37,7 +37,7 @@ describe('SketchForge API Service Tests', () => {
     };
 
     let capturedBody: FormData | null = null;
-    global.fetch = vi.fn().mockImplementation(async (_url, opts) => {
+    globalThis.fetch = vi.fn().mockImplementation(async (_url, opts) => {
       capturedBody = opts.body;
       return {
         ok: true,
@@ -53,7 +53,7 @@ describe('SketchForge API Service Tests', () => {
   });
 
   it('startGeneration initiates tracked async job', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ job_id: 'job-987', status: 'queued' }),
     } as any);
@@ -65,7 +65,7 @@ describe('SketchForge API Service Tests', () => {
   });
 
   it('pollJob retrieves real-time status and telemetry', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         job_id: 'job-987',

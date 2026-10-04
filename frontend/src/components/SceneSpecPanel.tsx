@@ -68,6 +68,7 @@ export const SceneSpecPanel: React.FC<SceneSpecPanelProps> = ({ sceneSpec, versi
         </div>
 
         <button
+          type="button"
           onClick={() => setShowRawJson(!showRawJson)}
           style={{
             padding: '2px 6px',

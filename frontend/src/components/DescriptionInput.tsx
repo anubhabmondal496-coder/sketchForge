@@ -35,6 +35,7 @@ export const DescriptionInput: React.FC<DescriptionInputProps> = ({
         </label>
         {value && (
           <button
+            type="button"
             onClick={() => onChange('')}
             disabled={disabled}
             style={{

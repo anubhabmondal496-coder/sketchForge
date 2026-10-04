@@ -108,6 +108,7 @@ export const Header: React.FC<HeaderProps> = ({
               : 'CPU / Mock fallback'}
           </span>
           <button
+            type="button"
             onClick={onRefreshHealth}
             style={{
               padding: '2px 6px',

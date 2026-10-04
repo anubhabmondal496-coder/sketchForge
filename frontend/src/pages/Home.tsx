@@ -37,6 +37,10 @@ export const Home: React.FC = () => {
   const [description, setDescription] = useState<string>('');
   const [lastImageBlob, setLastImageBlob] = useState<Blob | null>(null);
 
+  const handleStrokeChange = useCallback((has: boolean) => {
+    setHasStrokes(has);
+  }, []);
+
   // Active generation / job state
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
@@ -221,7 +225,7 @@ export const Home: React.FC = () => {
             <div style={{ flex: 1, minHeight: '380px' }}>
               <SketchCanvas
                 ref={canvasRef}
-                onStrokeChange={(has) => setHasStrokes(has)}
+                onStrokeChange={handleStrokeChange}
               />
             </div>
 
@@ -332,6 +336,7 @@ export const Home: React.FC = () => {
           <span>GLB Mesh Export</span>
           <span>DigitalOcean RTX 4000 Ada</span>
           <button
+            type="button"
             onClick={() => setLegalModalType('privacy')}
             style={{
               padding: '0',
@@ -346,6 +351,7 @@ export const Home: React.FC = () => {
             Privacy
           </button>
           <button
+            type="button"
             onClick={() => setLegalModalType('terms')}
             style={{
               padding: '0',

@@ -18,123 +18,116 @@ interface Stroke {
   isEraser: boolean;
 }
 
+const CANVAS_RES = 800; // Fixed internal bitmap resolution (never mutated, impossible to wipe)
+
 export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (hasStrokes: boolean) => void }>(
   ({ onStrokeChange }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
     const [isDrawing, setIsDrawing] = useState(false);
-    const [brushSize, setBrushSize] = useState<number>(4);
+    const [brushSize, setBrushSize] = useState<number>(6);
     const [isEraser, setIsEraser] = useState<boolean>(false);
     const [strokes, setStrokes] = useState<Stroke[]>([]);
     const [redoStack, setRedoStack] = useState<Stroke[]>([]);
-    const currentStroke = useRef<Stroke | null>(null);
 
-    // Re-render canvas from strokes
-    const redrawCanvas = useCallback(() => {
+    const currentStroke = useRef<Stroke | null>(null);
+    const strokesRef = useRef<Stroke[]>([]);
+    strokesRef.current = strokes;
+
+    // Redraw all strokes cleanly onto the 800x800 bitmap
+    const renderCanvas = useCallback(() => {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      const rect = canvas.getBoundingClientRect();
-
-      // Fill light background
+      // Fill pure white background
       ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, rect.width, rect.height);
+      ctx.fillRect(0, 0, CANVAS_RES, CANVAS_RES);
 
-      // Draw subtle grid guides for industrial sketching
+      // Draw subtle grid guides
       ctx.strokeStyle = '#f1f5f9';
-      ctx.lineWidth = 1;
-      const gridSize = 32;
-      for (let x = gridSize; x < rect.width; x += gridSize) {
+      ctx.lineWidth = 1.5;
+      const gridSize = 40;
+      for (let x = gridSize; x < CANVAS_RES; x += gridSize) {
         ctx.beginPath();
         ctx.moveTo(x, 0);
-        ctx.lineTo(x, rect.height);
+        ctx.lineTo(x, CANVAS_RES);
         ctx.stroke();
       }
-      for (let y = gridSize; y < rect.height; y += gridSize) {
+      for (let y = gridSize; y < CANVAS_RES; y += gridSize) {
         ctx.beginPath();
         ctx.moveTo(0, y);
-        ctx.lineTo(rect.width, y);
+        ctx.lineTo(CANVAS_RES, y);
         ctx.stroke();
       }
 
-      // Draw all committed strokes
-      const allStrokes = currentStroke.current ? [...strokes, currentStroke.current] : strokes;
+      // Combine committed strokes + active in-progress stroke
+      const allStrokes = currentStroke.current
+        ? [...strokesRef.current, currentStroke.current]
+        : strokesRef.current;
+
       for (const stroke of allStrokes) {
-        if (stroke.points.length < 1) continue;
-        ctx.beginPath();
+        if (!stroke.points || stroke.points.length === 0) continue;
+
+        ctx.fillStyle = stroke.isEraser ? '#ffffff' : '#111827';
+        ctx.strokeStyle = stroke.isEraser ? '#ffffff' : '#111827';
+        ctx.lineWidth = stroke.size;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.lineWidth = stroke.size;
-        ctx.strokeStyle = stroke.isEraser ? '#ffffff' : '#111827';
 
-        const p0 = stroke.points[0];
-        ctx.moveTo(p0.x, p0.y);
-        for (let i = 1; i < stroke.points.length; i++) {
-          const pt = stroke.points[i];
-          ctx.lineTo(pt.x, pt.y);
+        if (stroke.points.length === 1) {
+          // Single dot
+          const p = stroke.points[0];
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, stroke.size / 2, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          // Continuous stroke
+          ctx.beginPath();
+          ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+          for (let i = 1; i < stroke.points.length; i++) {
+            ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+          }
+          ctx.stroke();
         }
-        ctx.stroke();
       }
-    }, [strokes]);
+    }, []);
 
-    // Handle high-DPI resize
+    // Initial render and render on stroke updates
     useEffect(() => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-
-      const resize = () => {
-        const rect = canvas.getBoundingClientRect();
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width = rect.width * dpr;
-        canvas.height = rect.height * dpr;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.scale(dpr, dpr);
-        }
-        redrawCanvas();
-      };
-
-      resize();
-      window.addEventListener('resize', resize);
-      return () => window.removeEventListener('resize', resize);
-    }, [redrawCanvas]);
-
-    useEffect(() => {
-      redrawCanvas();
+      renderCanvas();
       onStrokeChange?.(strokes.length > 0);
-    }, [strokes, redrawCanvas, onStrokeChange]);
+    }, [strokes, renderCanvas, onStrokeChange]);
 
-    const getCanvasPoint = (e: React.MouseEvent | React.TouchEvent): Point | null => {
+    const getPointFromEvent = (e: React.PointerEvent<HTMLCanvasElement>): Point | null => {
       const canvas = canvasRef.current;
       if (!canvas) return null;
       const rect = canvas.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return null;
 
-      let clientX = 0;
-      let clientY = 0;
-
-      if ('touches' in e) {
-        if (e.touches.length === 0) return null;
-        clientX = e.touches[0].clientX;
-        clientY = e.touches[0].clientY;
-      } else {
-        clientX = e.clientX;
-        clientY = e.clientY;
-      }
+      // Transform client coordinates into fixed 800x800 coordinate space
+      const scaleX = CANVAS_RES / rect.width;
+      const scaleY = CANVAS_RES / rect.height;
 
       return {
-        x: clientX - rect.left,
-        y: clientY - rect.top,
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY,
       };
     };
 
-    const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
-      if ('touches' in e) {
-        // Prevent touch scroll
-        e.preventDefault();
-      }
-      const pt = getCanvasPoint(e);
+    const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const pt = getPointFromEvent(e);
       if (!pt) return;
+
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Fallback
+      }
 
       setIsDrawing(true);
       currentStroke.current = {
@@ -142,27 +135,40 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
         size: brushSize,
         isEraser: isEraser,
       };
-      redrawCanvas();
+
+      renderCanvas();
     };
 
-    const draw = (e: React.MouseEvent | React.TouchEvent) => {
+    const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
       if (!isDrawing || !currentStroke.current) return;
-      if ('touches' in e) {
-        e.preventDefault();
-      }
-      const pt = getCanvasPoint(e);
+      e.preventDefault();
+      e.stopPropagation();
+
+      const pt = getPointFromEvent(e);
       if (!pt) return;
 
       currentStroke.current.points.push(pt);
-      redrawCanvas();
+      renderCanvas();
     };
 
-    const stopDrawing = () => {
+    const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
       if (!isDrawing) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      try {
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        }
+      } catch {
+        // Fallback
+      }
+
       setIsDrawing(false);
+
       if (currentStroke.current && currentStroke.current.points.length > 0) {
         setStrokes((prev) => [...prev, currentStroke.current!]);
-        setRedoStack([]); // clear redo on new action
+        setRedoStack([]);
       }
       currentStroke.current = null;
     };
@@ -182,69 +188,57 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
     };
 
     const handleClear = () => {
-      if (strokes.length === 0) return;
+      currentStroke.current = null;
       setStrokes([]);
       setRedoStack([]);
     };
 
     const loadPreset = (type: 'chair' | 'table' | 'lamp' | 'mug') => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const w = rect.width;
-      const h = rect.height;
-      const cx = w / 2;
-      const cy = h / 2;
+      const cx = CANVAS_RES / 2;
+      const cy = CANVAS_RES / 2;
 
       let presetStrokes: Stroke[] = [];
 
       if (type === 'chair') {
         presetStrokes = [
           // Backrest vertical posts
-          { points: [{ x: cx - 50, y: cy - 90 }, { x: cx - 50, y: cy + 10 }], size: 5, isEraser: false },
-          { points: [{ x: cx + 50, y: cy - 90 }, { x: cx + 50, y: cy + 10 }], size: 5, isEraser: false },
+          { points: [{ x: cx - 100, y: cy - 180 }, { x: cx - 100, y: cy + 20 }], size: 8, isEraser: false },
+          { points: [{ x: cx + 100, y: cy - 180 }, { x: cx + 100, y: cy + 20 }], size: 8, isEraser: false },
           // Backrest top rail & splats
-          { points: [{ x: cx - 52, y: cy - 85 }, { x: cx + 52, y: cy - 85 }], size: 6, isEraser: false },
-          { points: [{ x: cx - 25, y: cy - 85 }, { x: cx - 25, y: cy + 10 }], size: 3, isEraser: false },
-          { points: [{ x: cx + 25, y: cy - 85 }, { x: cx + 25, y: cy + 10 }], size: 3, isEraser: false },
+          { points: [{ x: cx - 105, y: cy - 170 }, { x: cx + 105, y: cy - 170 }], size: 10, isEraser: false },
+          { points: [{ x: cx - 50, y: cy - 170 }, { x: cx - 50, y: cy + 20 }], size: 6, isEraser: false },
+          { points: [{ x: cx + 50, y: cy - 170 }, { x: cx + 50, y: cy + 20 }], size: 6, isEraser: false },
           // Seat cushion / plane
-          { points: [{ x: cx - 60, y: cy + 10 }, { x: cx + 60, y: cy + 10 }, { x: cx + 50, y: cy + 25 }, { x: cx - 50, y: cy + 25 }, { x: cx - 60, y: cy + 10 }], size: 5, isEraser: false },
+          { points: [{ x: cx - 120, y: cy + 20 }, { x: cx + 120, y: cy + 20 }, { x: cx + 100, y: cy + 50 }, { x: cx - 100, y: cy + 50 }, { x: cx - 120, y: cy + 20 }], size: 8, isEraser: false },
           // Four legs
-          { points: [{ x: cx - 55, y: cy + 25 }, { x: cx - 55, y: cy + 100 }], size: 5, isEraser: false },
-          { points: [{ x: cx + 55, y: cy + 25 }, { x: cx + 55, y: cy + 100 }], size: 5, isEraser: false },
-          { points: [{ x: cx - 40, y: cy + 25 }, { x: cx - 40, y: cy + 85 }], size: 4, isEraser: false },
-          { points: [{ x: cx + 40, y: cy + 25 }, { x: cx + 40, y: cy + 85 }], size: 4, isEraser: false },
+          { points: [{ x: cx - 110, y: cy + 50 }, { x: cx - 110, y: cy + 200 }], size: 8, isEraser: false },
+          { points: [{ x: cx + 110, y: cy + 50 }, { x: cx + 110, y: cy + 200 }], size: 8, isEraser: false },
+          { points: [{ x: cx - 80, y: cy + 50 }, { x: cx - 80, y: cy + 170 }], size: 6, isEraser: false },
+          { points: [{ x: cx + 80, y: cy + 50 }, { x: cx + 80, y: cy + 170 }], size: 6, isEraser: false },
         ];
       } else if (type === 'table') {
         presetStrokes = [
-          // Table top surface
-          { points: [{ x: cx - 90, y: cy - 20 }, { x: cx + 90, y: cy - 20 }, { x: cx + 75, y: cy }, { x: cx - 75, y: cy }, { x: cx - 90, y: cy - 20 }], size: 6, isEraser: false },
-          // 4 Legs
-          { points: [{ x: cx - 80, y: cy }, { x: cx - 80, y: cy + 90 }], size: 5, isEraser: false },
-          { points: [{ x: cx + 80, y: cy }, { x: cx + 80, y: cy + 90 }], size: 5, isEraser: false },
-          { points: [{ x: cx - 65, y: cy }, { x: cx - 65, y: cy + 75 }], size: 4, isEraser: false },
-          { points: [{ x: cx + 65, y: cy }, { x: cx + 65, y: cy + 75 }], size: 4, isEraser: false },
+          { points: [{ x: cx - 180, y: cy - 40 }, { x: cx + 180, y: cy - 40 }, { x: cx + 150, y: cy }, { x: cx - 150, y: cy }, { x: cx - 180, y: cy - 40 }], size: 10, isEraser: false },
+          { points: [{ x: cx - 160, y: cy }, { x: cx - 160, y: cy + 180 }], size: 8, isEraser: false },
+          { points: [{ x: cx + 160, y: cy }, { x: cx + 160, y: cy + 180 }], size: 8, isEraser: false },
+          { points: [{ x: cx - 130, y: cy }, { x: cx - 130, y: cy + 150 }], size: 6, isEraser: false },
+          { points: [{ x: cx + 130, y: cy }, { x: cx + 130, y: cy + 150 }], size: 6, isEraser: false },
         ];
       } else if (type === 'lamp') {
         presetStrokes = [
-          // Shade
-          { points: [{ x: cx - 30, y: cy - 80 }, { x: cx + 30, y: cy - 80 }, { x: cx + 55, y: cy - 30 }, { x: cx - 55, y: cy - 30 }, { x: cx - 30, y: cy - 80 }], size: 5, isEraser: false },
-          // Stem
-          { points: [{ x: cx, y: cy - 30 }, { x: cx, y: cy + 70 }], size: 6, isEraser: false },
-          // Base
-          { points: [{ x: cx - 45, y: cy + 70 }, { x: cx + 45, y: cy + 70 }, { x: cx + 40, y: cy + 80 }, { x: cx - 40, y: cy + 80 }, { x: cx - 45, y: cy + 70 }], size: 5, isEraser: false },
+          { points: [{ x: cx - 60, y: cy - 160 }, { x: cx + 60, y: cy - 160 }, { x: cx + 110, y: cy - 60 }, { x: cx - 110, y: cy - 60 }, { x: cx - 60, y: cy - 160 }], size: 8, isEraser: false },
+          { points: [{ x: cx, y: cy - 60 }, { x: cx, y: cy + 140 }], size: 10, isEraser: false },
+          { points: [{ x: cx - 90, y: cy + 140 }, { x: cx + 90, y: cy + 140 }, { x: cx + 80, y: cy + 160 }, { x: cx - 80, y: cy + 160 }, { x: cx - 90, y: cy + 140 }], size: 8, isEraser: false },
         ];
       } else if (type === 'mug') {
         presetStrokes = [
-          // Cup cylinder
-          { points: [{ x: cx - 45, y: cy - 50 }, { x: cx + 45, y: cy - 50 }, { x: cx + 40, y: cy + 50 }, { x: cx - 40, y: cy + 50 }, { x: cx - 45, y: cy - 50 }], size: 5, isEraser: false },
-          // Rim ellipse
-          { points: [{ x: cx - 45, y: cy - 50 }, { x: cx, y: cy - 40 }, { x: cx + 45, y: cy - 50 }], size: 4, isEraser: false },
-          // Handle
-          { points: [{ x: cx + 43, y: cy - 30 }, { x: cx + 75, y: cy - 10 }, { x: cx + 75, y: cy + 20 }, { x: cx + 39, y: cy + 35 }], size: 5, isEraser: false },
+          { points: [{ x: cx - 90, y: cy - 100 }, { x: cx + 90, y: cy - 100 }, { x: cx + 80, y: cy + 100 }, { x: cx - 80, y: cy + 100 }, { x: cx - 90, y: cy - 100 }], size: 10, isEraser: false },
+          { points: [{ x: cx - 90, y: cy - 100 }, { x: cx, y: cy - 80 }, { x: cx + 90, y: cy - 100 }], size: 6, isEraser: false },
+          { points: [{ x: cx + 86, y: cy - 60 }, { x: cx + 150, y: cy - 20 }, { x: cx + 150, y: cy + 40 }, { x: cx + 78, y: cy + 70 }], size: 10, isEraser: false },
         ];
       }
 
+      currentStroke.current = null;
       setStrokes(presetStrokes);
       setRedoStack([]);
     };
@@ -254,39 +248,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
         const canvas = canvasRef.current;
         if (!canvas || strokes.length === 0) return null;
 
-        // Render pure clean export without grid lines on standard 512x512
-        const exportCanvas = document.createElement('canvas');
-        exportCanvas.width = 512;
-        exportCanvas.height = 512;
-        const eCtx = exportCanvas.getContext('2d');
-        if (!eCtx) return null;
-
-        const rect = canvas.getBoundingClientRect();
-        const scaleX = 512 / rect.width;
-        const scaleY = 512 / rect.height;
-
-        eCtx.fillStyle = '#ffffff';
-        eCtx.fillRect(0, 0, 512, 512);
-
-        for (const stroke of strokes) {
-          if (stroke.points.length < 1) continue;
-          eCtx.beginPath();
-          eCtx.lineCap = 'round';
-          eCtx.lineJoin = 'round';
-          eCtx.lineWidth = stroke.size * Math.min(scaleX, scaleY);
-          eCtx.strokeStyle = stroke.isEraser ? '#ffffff' : '#000000';
-
-          const p0 = stroke.points[0];
-          eCtx.moveTo(p0.x * scaleX, p0.y * scaleY);
-          for (let i = 1; i < stroke.points.length; i++) {
-            const pt = stroke.points[i];
-            eCtx.lineTo(pt.x * scaleX, pt.y * scaleY);
-          }
-          eCtx.stroke();
-        }
-
         return new Promise<Blob | null>((resolve) => {
-          exportCanvas.toBlob((blob) => resolve(blob), 'image/png');
+          canvas.toBlob((blob) => resolve(blob), 'image/png');
         });
       },
       isEmpty: () => strokes.length === 0,
@@ -295,7 +258,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
     }));
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          overscrollBehavior: 'none',
+        }}
+        onDragStart={(e) => e.preventDefault()}
+      >
         {/* Toolbar */}
         <div
           style={{
@@ -311,6 +284,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <button
+              type="button"
               onClick={() => setIsEraser(false)}
               style={{
                 background: !isEraser ? 'var(--accent)' : 'var(--bg-input)',
@@ -322,6 +296,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
               Pen
             </button>
             <button
+              type="button"
               onClick={() => setIsEraser(true)}
               style={{
                 background: isEraser ? 'var(--accent)' : 'var(--bg-input)',
@@ -337,7 +312,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
               <input
                 type="range"
                 min="2"
-                max="20"
+                max="30"
                 value={brushSize}
                 onChange={(e) => setBrushSize(Number(e.target.value))}
                 style={{ width: '60px', height: '4px', cursor: 'pointer', padding: 0 }}
@@ -347,13 +322,28 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <button onClick={handleUndo} disabled={strokes.length === 0} title="Undo stroke">
+            <button
+              type="button"
+              onClick={handleUndo}
+              disabled={strokes.length === 0}
+              title="Undo stroke"
+            >
               Undo
             </button>
-            <button onClick={handleRedo} disabled={redoStack.length === 0} title="Redo stroke">
+            <button
+              type="button"
+              onClick={handleRedo}
+              disabled={redoStack.length === 0}
+              title="Redo stroke"
+            >
               Redo
             </button>
-            <button onClick={handleClear} disabled={strokes.length === 0} title="Clear canvas">
+            <button
+              type="button"
+              onClick={handleClear}
+              disabled={strokes.length === 0}
+              title="Clear canvas"
+            >
               Clear
             </button>
           </div>
@@ -369,22 +359,35 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
             cursor: isEraser ? 'cell' : 'crosshair',
             overflow: 'hidden',
             touchAction: 'none',
+            overscrollBehavior: 'none',
+            userSelect: 'none',
+            WebkitUserSelect: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
+          onContextMenu={(e) => e.preventDefault()}
+          onDragStart={(e) => e.preventDefault()}
         >
           <canvas
             ref={canvasRef}
-            onMouseDown={startDrawing}
-            onMouseMove={draw}
-            onMouseUp={stopDrawing}
-            onMouseLeave={stopDrawing}
-            onTouchStart={startDrawing}
-            onTouchMove={draw}
-            onTouchEnd={stopDrawing}
+            width={CANVAS_RES}
+            height={CANVAS_RES}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            onContextMenu={(e) => e.preventDefault()}
+            onDragStart={(e) => e.preventDefault()}
             style={{
               width: '100%',
               height: '100%',
+              objectFit: 'contain',
               display: 'block',
               touchAction: 'none',
+              overscrollBehavior: 'none',
+              userSelect: 'none',
+              WebkitUserSelect: 'none',
             }}
           />
           {strokes.length === 0 && (
@@ -422,24 +425,28 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
           <span>Demo Presets:</span>
           <div style={{ display: 'flex', gap: '4px' }}>
             <button
+              type="button"
               onClick={() => loadPreset('chair')}
               style={{ fontSize: '11px', padding: '2px 8px' }}
             >
               Chair
             </button>
             <button
+              type="button"
               onClick={() => loadPreset('table')}
               style={{ fontSize: '11px', padding: '2px 8px' }}
             >
               Table
             </button>
             <button
+              type="button"
               onClick={() => loadPreset('lamp')}
               style={{ fontSize: '11px', padding: '2px 8px' }}
             >
               Lamp
             </button>
             <button
+              type="button"
               onClick={() => loadPreset('mug')}
               style={{ fontSize: '11px', padding: '2px 8px' }}
             >

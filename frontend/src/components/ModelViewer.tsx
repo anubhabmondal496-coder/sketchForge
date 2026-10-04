@@ -16,42 +16,37 @@ interface MeshRendererProps {
   onError?: (err: Error) => void;
 }
 
-const MeshRenderer: React.FC<MeshRendererProps> = ({ url, wireframe, onLoaded, onError }) => {
-  try {
-    const gltf = useGLTF(url);
+const MeshRenderer: React.FC<MeshRendererProps> = ({ url, wireframe, onLoaded }) => {
+  const gltf = useGLTF(url);
 
-    useEffect(() => {
-      if (gltf && gltf.scene) {
-        gltf.scene.traverse((child) => {
-          if ((child as THREE.Mesh).isMesh) {
-            const mesh = child as THREE.Mesh;
-            mesh.castShadow = true;
-            mesh.receiveShadow = true;
-            if (Array.isArray(mesh.material)) {
-              mesh.material.forEach((m: any) => {
-                if ('wireframe' in m) m.wireframe = wireframe;
-                m.side = THREE.DoubleSide;
-              });
-            } else if (mesh.material) {
-              const m = mesh.material as any;
+  useEffect(() => {
+    if (gltf && gltf.scene) {
+      gltf.scene.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+          if (Array.isArray(mesh.material)) {
+            mesh.material.forEach((m: any) => {
               if ('wireframe' in m) m.wireframe = wireframe;
               m.side = THREE.DoubleSide;
-            }
+            });
+          } else if (mesh.material) {
+            const m = mesh.material as any;
+            if ('wireframe' in m) m.wireframe = wireframe;
+            m.side = THREE.DoubleSide;
           }
-        });
-        onLoaded?.();
-      }
-    }, [gltf, wireframe, onLoaded]);
+        }
+      });
+      onLoaded?.();
+    }
+  }, [gltf, wireframe, onLoaded]);
 
-    return (
-      <Center top>
-        <primitive object={gltf.scene} scale={1.8} />
-      </Center>
-    );
-  } catch (err: any) {
-    onError?.(err);
-    return null;
-  }
+  return (
+    <Center top>
+      <primitive object={gltf.scene} scale={1.8} />
+    </Center>
+  );
 };
 
 class ViewerErrorBoundary extends React.Component<
@@ -130,6 +125,7 @@ export const ModelViewer: React.FC<ModelViewerProps> = ({
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <button
+            type="button"
             onClick={() => setWireframe(!wireframe)}
             style={{
               background: wireframe ? 'var(--accent)' : 'var(--bg-input)',
@@ -143,6 +139,7 @@ export const ModelViewer: React.FC<ModelViewerProps> = ({
             Wireframe
           </button>
           <button
+            type="button"
             onClick={() => setShowGrid(!showGrid)}
             style={{
               background: showGrid ? 'var(--bg-panel)' : 'var(--bg-input)',
@@ -155,6 +152,7 @@ export const ModelViewer: React.FC<ModelViewerProps> = ({
             Grid
           </button>
           <button
+            type="button"
             onClick={() => setShowAxes(!showAxes)}
             style={{
               background: showAxes ? 'var(--bg-panel)' : 'var(--bg-input)',
@@ -167,6 +165,7 @@ export const ModelViewer: React.FC<ModelViewerProps> = ({
             Axes
           </button>
           <button
+            type="button"
             onClick={handleResetCamera}
             style={{ fontSize: '11px', padding: '3px 8px' }}
             title="Reset Camera Angle"
@@ -182,6 +181,7 @@ export const ModelViewer: React.FC<ModelViewerProps> = ({
             </span>
           )}
           <button
+            type="button"
             className="primary"
             disabled={!modelUrl}
             onClick={handleDownload}

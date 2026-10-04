@@ -65,6 +65,7 @@ export const GenerationStatus: React.FC<GenerationStatusProps> = ({
         </div>
         {onDismissError && (
           <button
+            type="button"
             onClick={onDismissError}
             style={{
               padding: '2px 6px',
