@@ -1,16 +1,23 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel, Field
 
 from app.models.scene_spec import SceneSpec
+from app.models.asset import AssetMetadata, AssetSearchResult
 
 class JobStatus(str, Enum):
+    IDLE = "idle"
     QUEUED = "queued"
     ANALYZING = "analyzing"
+    SEARCHING = "searching"
+    FOUND = "found"
+    DOWNLOADING = "downloading"
+    IMPORTING = "importing"
     GENERATING = "generating"
     PROCESSING = "processing"
     COMPLETED = "completed"
+    READY = "ready"
     FAILED = "failed"
 
 class Job(BaseModel):
@@ -28,3 +35,9 @@ class Job(BaseModel):
     model_path: Optional[str] = None
     description: Optional[str] = None
     refinement_prompt: Optional[str] = None
+    
+    # Asset pipeline extensions
+    source_type: Optional[str] = "ai_generation" # "asset_search" or "ai_generation"
+    asset_metadata: Optional[AssetMetadata] = None
+    search_results: Optional[List[AssetSearchResult]] = None
+

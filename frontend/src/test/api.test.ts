@@ -79,4 +79,63 @@ describe('SketchForge API Service Tests', () => {
     expect(result.status).toBe('completed');
     expect(result.generation_time).toBe(12.4);
   });
+
+  it('searchAssets queries asset search endpoint', async () => {
+    const mockResults = {
+      results: [
+        {
+          provider: 'sketchfab',
+          id: 'sk_123',
+          name: 'Office Chair',
+          score: 0.94,
+          downloadable: true,
+        },
+      ],
+      total: 1,
+      best_match: { provider: 'sketchfab', id: 'sk_123', name: 'Office Chair', score: 0.94, downloadable: true },
+    };
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockResults,
+    } as any);
+
+    const res = await (await import('../services/api')).searchAssets({ object_type: 'chair' });
+    expect(res.results.length).toBe(1);
+    expect(res.results[0].name).toBe('Office Chair');
+    expect(res.best_match?.score).toBe(0.94);
+  });
+
+  it('importAsset downloads and activates asset model', async () => {
+    const mockImport = {
+      success: true,
+      asset_id: 'sk_123',
+      provider: 'sketchfab',
+      model_url: '/api/assets/sketchfab/sk_123/model.glb',
+      cached: false,
+      metadata: {
+        source: 'Sketchfab',
+        provider: 'sketchfab',
+        asset_id: 'sk_123',
+        author: 'Artist',
+        license: 'CC BY',
+      },
+    };
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockImport,
+    } as any);
+
+    const res = await (await import('../services/api')).importAsset({
+      provider: 'sketchfab',
+      id: 'sk_123',
+      name: 'Office Chair',
+      score: 0.94,
+      downloadable: true,
+    });
+    expect(res.success).toBe(true);
+    expect(res.model_url).toContain('sk_123');
+    expect(res.metadata.license).toBe('CC BY');
+  });
 });

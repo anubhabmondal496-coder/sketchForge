@@ -3,10 +3,14 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Center, Grid } from '@react-three/drei';
 import * as THREE from 'three';
 
+import { AssetMetadata } from '../types/scene';
+
 interface ModelViewerProps {
   modelUrl: string | null;
   onDownloadGlb?: () => void;
   generationTime?: number;
+  assetMetadata?: AssetMetadata | null;
+  sourceType?: 'asset_search' | 'ai_generation';
 }
 
 interface MeshRendererProps {
@@ -21,6 +25,26 @@ const MeshRenderer: React.FC<MeshRendererProps> = ({ url, wireframe, onLoaded })
 
   useEffect(() => {
     if (gltf && gltf.scene) {
+      // 1. Calculate bounding box & auto-center/scale model to fit viewport (Step 7)
+      const box = new THREE.Box3().setFromObject(gltf.scene);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+
+      // Center model
+      gltf.scene.position.x += (gltf.scene.position.x - center.x);
+      gltf.scene.position.y += (gltf.scene.position.y - box.min.y); // Ground to y=0
+      gltf.scene.position.z += (gltf.scene.position.z - center.z);
+
+      // Auto-scale to normalized bounding size (around 1.8 units)
+      const maxDim = Math.max(size.x, size.y, size.z);
+      if (maxDim > 0) {
+        const targetScale = 1.8 / maxDim;
+        gltf.scene.scale.setScalar(targetScale);
+      }
+
+      // Preserve materials, textures, shadows
       gltf.scene.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
           const mesh = child as THREE.Mesh;
@@ -44,7 +68,7 @@ const MeshRenderer: React.FC<MeshRendererProps> = ({ url, wireframe, onLoaded })
 
   return (
     <Center top>
-      <primitive object={gltf.scene} scale={1.8} />
+      <primitive object={gltf.scene} />
     </Center>
   );
 };
@@ -73,6 +97,8 @@ export const ModelViewer: React.FC<ModelViewerProps> = ({
   modelUrl,
   onDownloadGlb,
   generationTime,
+  assetMetadata,
+  sourceType,
 }) => {
   const [wireframe, setWireframe] = useState(false);
   const [showGrid, setShowGrid] = useState(true);
@@ -175,11 +201,26 @@ export const ModelViewer: React.FC<ModelViewerProps> = ({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {generationTime !== undefined && (
+          {sourceType === 'asset_search' ? (
+            <span
+              style={{
+                fontSize: '10px',
+                background: 'rgba(16, 185, 129, 0.15)',
+                color: '#34d399',
+                padding: '2px 8px',
+                borderRadius: '10px',
+                fontWeight: 600,
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+              }}
+            >
+              Imported 3D Asset
+            </span>
+          ) : generationTime !== undefined ? (
             <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
               Reconstructed in {generationTime.toFixed(1)}s
             </span>
-          )}
+          ) : null}
+
           <button
             type="button"
             className="primary"
@@ -195,6 +236,38 @@ export const ModelViewer: React.FC<ModelViewerProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Legal Attribution Banner if Asset is Imported (Step 2, Legal Rules) */}
+      {assetMetadata && (
+        <div
+          style={{
+            padding: '6px 12px',
+            background: 'rgba(30, 41, 59, 0.9)',
+            borderBottom: '1px solid rgba(59, 130, 246, 0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontSize: '11px',
+            color: 'var(--text-muted)',
+            zIndex: 10,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ color: '#60a5fa', fontWeight: 600 }}>Source:</span>
+            <span>{assetMetadata.provider.toUpperCase()} &bull; Author: <strong>{assetMetadata.author || 'Open Creator'}</strong> &bull; License: <strong style={{ color: '#34d399' }}>{assetMetadata.license || 'CC BY'}</strong></span>
+          </div>
+          {assetMetadata.source_url && (
+            <a
+              href={assetMetadata.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#60a5fa', textDecoration: 'underline', fontSize: '10px' }}
+            >
+              View Attribution
+            </a>
+          )}
+        </div>
+      )}
 
       {/* 3D Canvas Area */}
       <div style={{ position: 'relative', flex: 1, minHeight: '380px', width: '100%' }}>

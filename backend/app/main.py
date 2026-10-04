@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.api import health, analyze, generate, refine
+from app.api import health, analyze, generate, refine, assets
 
 # Configure structured logging
 logging.basicConfig(
@@ -68,6 +68,7 @@ app.include_router(health.router)
 app.include_router(analyze.router)
 app.include_router(generate.router)
 app.include_router(refine.router)
+app.include_router(assets.router)
 
 @app.get("/")
 def root():

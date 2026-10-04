@@ -8,18 +8,22 @@ import { ModelViewer } from '../components/ModelViewer';
 import { SceneSpecPanel } from '../components/SceneSpecPanel';
 import { RefinementInput } from '../components/RefinementInput';
 import { LegalModal } from '../components/LegalModal';
+import { AssetPreviewPanel } from '../components/AssetPreviewPanel';
 import {
   checkHealth,
   startGeneration,
   pollJob,
   refineScene,
   getModelFileUrl,
+  importAsset,
 } from '../services/api';
 import {
   HealthResponse,
   JobStatus,
   SceneSpec,
   RefinementHistoryEntry,
+  AssetSearchResult,
+  AssetMetadata,
 } from '../types/scene';
 
 export const Home: React.FC = () => {
@@ -51,6 +55,11 @@ export const Home: React.FC = () => {
   // Scene & Model state
   const [currentSceneSpec, setCurrentSceneSpec] = useState<SceneSpec | null>(null);
   const [currentModelUrl, setCurrentModelUrl] = useState<string | null>(null);
+  const [currentSourceType, setCurrentSourceType] = useState<'asset_search' | 'ai_generation'>('ai_generation');
+  const [currentAssetMetadata, setCurrentAssetMetadata] = useState<AssetMetadata | null>(null);
+  const [searchResults, setSearchResults] = useState<AssetSearchResult[]>([]);
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
+  const [isImportingAsset, setIsImportingAsset] = useState<boolean>(false);
   const [history, setHistory] = useState<RefinementHistoryEntry[]>([]);
   const [currentVersion, setCurrentVersion] = useState<number>(1);
 
@@ -95,7 +104,11 @@ export const Home: React.FC = () => {
         setJobStatus(job.status);
         if (job.stage_message) setStageMessage(job.stage_message);
 
-        if (job.status === 'completed') {
+        if (job.search_results && job.search_results.length > 0) {
+          setSearchResults(job.search_results);
+        }
+
+        if (job.status === 'completed' || job.status === 'ready') {
           const modelUrl = job.model_url
             ? (job.model_url.startsWith('http') ? job.model_url : getModelFileUrl(job.job_id))
             : getModelFileUrl(job.job_id);
@@ -103,6 +116,11 @@ export const Home: React.FC = () => {
           const spec = job.scene_spec || null;
           setCurrentSceneSpec(spec);
           setCurrentModelUrl(modelUrl);
+          setCurrentSourceType(job.source_type || 'ai_generation');
+          setCurrentAssetMetadata(job.asset_metadata || null);
+          if (job.asset_metadata) {
+            setSelectedAssetId(job.asset_metadata.asset_id);
+          }
           if (job.generation_time) setGenerationTime(job.generation_time);
 
           const nextVersion = (previousVersion || 0) + 1;
@@ -118,6 +136,8 @@ export const Home: React.FC = () => {
                 refinement_prompt: refinementText,
                 generation_time: job.generation_time,
                 timestamp: new Date().toISOString(),
+                source_type: job.source_type || 'ai_generation',
+                asset_metadata: job.asset_metadata || undefined,
               },
             ]);
           }
@@ -192,7 +212,55 @@ export const Home: React.FC = () => {
       setCurrentSceneSpec(entry.scene_spec);
       if (entry.model_url) setCurrentModelUrl(entry.model_url);
       if (entry.generation_time) setGenerationTime(entry.generation_time);
+      setCurrentSourceType(entry.source_type || 'ai_generation');
+      setCurrentAssetMetadata(entry.asset_metadata || null);
     }
+  };
+
+  // Step 8 -> Manual selection of an asset from search results
+  const handleUseAsset = async (asset: AssetSearchResult) => {
+    setIsImportingAsset(true);
+    setSelectedAssetId(asset.id);
+    setJobStatus('importing');
+    setStageMessage(`Importing ${asset.name} from ${asset.provider}...`);
+
+    try {
+      const res = await importAsset(asset);
+      if (res.success) {
+        setCurrentModelUrl(res.model_url);
+        setCurrentSourceType('asset_search');
+        setCurrentAssetMetadata(res.metadata);
+        setJobStatus('completed');
+        setStageMessage(`Model ready: ${asset.name}`);
+
+        const nextVersion = currentVersion + 1;
+        setCurrentVersion(nextVersion);
+        if (currentSceneSpec) {
+          setHistory((prev) => [
+            ...prev,
+            {
+              version: nextVersion,
+              scene_spec: currentSceneSpec,
+              model_url: res.model_url,
+              refinement_prompt: `Imported asset: ${asset.name}`,
+              generation_time: 0.8,
+              timestamp: new Date().toISOString(),
+              source_type: 'asset_search',
+              asset_metadata: res.metadata,
+            },
+          ]);
+        }
+      }
+    } catch (err: any) {
+      setPipelineError(err.message || 'Failed to import 3D asset.');
+      setJobStatus('failed');
+    } finally {
+      setIsImportingAsset(false);
+    }
+  };
+
+  const handleSelectAsset = (asset: AssetSearchResult) => {
+    setSelectedAssetId(asset.id);
   };
 
   const isGenerating =
@@ -282,8 +350,23 @@ export const Home: React.FC = () => {
               <ModelViewer
                 modelUrl={currentModelUrl}
                 generationTime={generationTime}
+                assetMetadata={currentAssetMetadata}
+                sourceType={currentSourceType}
               />
             </div>
+
+            {/* Asset Selection Preview Panel (Step 8) */}
+            {searchResults && searchResults.length > 0 && (
+              <div style={{ padding: '0 16px', background: 'var(--bg-panel)' }}>
+                <AssetPreviewPanel
+                  results={searchResults}
+                  selectedAssetId={selectedAssetId}
+                  onSelectAsset={handleSelectAsset}
+                  onUseAsset={handleUseAsset}
+                  isLoading={isImportingAsset}
+                />
+              </div>
+            )}
 
             {/* Reasoning & Refinement Footer */}
             <div
@@ -308,6 +391,7 @@ export const Home: React.FC = () => {
                 history={history}
                 currentVersion={currentVersion}
                 onSelectVersion={handleSelectVersion}
+                isStaticAsset={currentSourceType === 'asset_search'}
               />
             </div>
           </div>

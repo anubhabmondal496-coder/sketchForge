@@ -17,12 +17,45 @@ export interface SceneSpec {
 }
 
 export type JobStatus =
+  | 'idle'
   | 'queued'
   | 'analyzing'
+  | 'searching'
+  | 'found'
+  | 'downloading'
+  | 'importing'
   | 'generating'
   | 'processing'
   | 'completed'
+  | 'ready'
   | 'failed';
+
+export interface AssetMetadata {
+  source: string;
+  provider: string;
+  asset_id: string;
+  author?: string;
+  license?: string;
+  source_url?: string;
+  attribution?: string;
+  downloaded_at?: string;
+}
+
+export interface AssetSearchResult {
+  provider: string;
+  id: string;
+  name: string;
+  thumbnail_url?: string;
+  preview_url?: string;
+  download_url?: string;
+  format?: string;
+  license?: string;
+  author?: string;
+  attribution?: string;
+  score: number;
+  downloadable: boolean;
+  metadata?: AssetMetadata;
+}
 
 export interface JobResponse {
   job_id: string;
@@ -33,6 +66,9 @@ export interface JobResponse {
   generation_time?: number;
   error?: string;
   created_at?: string;
+  source_type?: 'asset_search' | 'ai_generation';
+  asset_metadata?: AssetMetadata;
+  search_results?: AssetSearchResult[];
 }
 
 export interface HealthResponse {
@@ -58,4 +94,6 @@ export interface RefinementHistoryEntry {
   refinement_prompt?: string;
   generation_time?: number;
   timestamp: string;
+  source_type?: 'asset_search' | 'ai_generation';
+  asset_metadata?: AssetMetadata;
 }

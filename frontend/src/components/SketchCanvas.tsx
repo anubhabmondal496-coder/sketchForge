@@ -62,13 +62,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
         ctx.stroke();
       }
 
-      // Combine committed strokes + active in-progress stroke
-      const allStrokes = currentStroke.current
-        ? [...strokesRef.current, currentStroke.current]
-        : strokesRef.current;
+      // Combine committed strokes + active in-progress stroke with null-filtering
+      const live = currentStroke.current;
+      const allStrokes = live && live.points ? [...strokesRef.current, live] : strokesRef.current;
 
       for (const stroke of allStrokes) {
-        if (!stroke.points || stroke.points.length === 0) continue;
+        if (!stroke || !stroke.points || stroke.points.length === 0) continue;
 
         ctx.fillStyle = stroke.isEraser ? '#ffffff' : '#111827';
         ctx.strokeStyle = stroke.isEraser ? '#ffffff' : '#111827';
@@ -79,15 +78,21 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
         if (stroke.points.length === 1) {
           // Single dot
           const p = stroke.points[0];
+          if (!p) continue;
           ctx.beginPath();
           ctx.arc(p.x, p.y, stroke.size / 2, 0, Math.PI * 2);
           ctx.fill();
         } else {
           // Continuous stroke
+          const startPt = stroke.points[0];
+          if (!startPt) continue;
           ctx.beginPath();
-          ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+          ctx.moveTo(startPt.x, startPt.y);
           for (let i = 1; i < stroke.points.length; i++) {
-            ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+            const pt = stroke.points[i];
+            if (pt) {
+              ctx.lineTo(pt.x, pt.y);
+            }
           }
           ctx.stroke();
         }
@@ -140,7 +145,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
     };
 
     const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-      if (!isDrawing || !currentStroke.current) return;
+      if (!isDrawing || !currentStroke.current || !currentStroke.current.points) return;
       e.preventDefault();
       e.stopPropagation();
 
@@ -166,11 +171,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, { onStrokeChange?: (h
 
       setIsDrawing(false);
 
-      if (currentStroke.current && currentStroke.current.points.length > 0) {
-        setStrokes((prev) => [...prev, currentStroke.current!]);
+      const active = currentStroke.current;
+      currentStroke.current = null;
+
+      if (active && Array.isArray(active.points) && active.points.length > 0) {
+        setStrokes((prev) => [...prev, active]);
         setRedoStack([]);
       }
-      currentStroke.current = null;
     };
 
     const handleUndo = () => {

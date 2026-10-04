@@ -13,6 +13,7 @@ from app.utils.image_processing import safe_path_join
 router = APIRouter(tags=["Generation"])
 
 @router.post("/generate")
+@router.post("/api/generate")
 async def generate_model(
     background_tasks: BackgroundTasks,
     image: UploadFile = File(..., description="2D sketch drawing PNG/JPEG"),
@@ -49,9 +50,11 @@ async def generate_model(
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/job/{job_id}", response_model=Job)
+@router.get("/api/jobs/{job_id}", response_model=Job)
 def get_job_status(job_id: str):
     """
     Polls the real-time status and telemetry of an ongoing or completed job.
+    Supports both legacy /job/{job_id} and standard /api/jobs/{job_id}.
     """
     job = job_service.get_job(job_id)
     if not job:

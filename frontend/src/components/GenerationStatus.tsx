@@ -11,11 +11,17 @@ interface GenerationStatusProps {
 }
 
 const STAGES = [
-  { key: 'queued', label: 'Queued for inference' },
-  { key: 'analyzing', label: 'Analyzing sketch with Gemma 4 E4B...' },
-  { key: 'generating', label: 'Generating 3D mesh with TripoSR...' },
-  { key: 'processing', label: 'Exporting GLB geometry...' },
-  { key: 'completed', label: 'Reconstruction completed' },
+  { key: 'idle', label: 'Draw something to begin.' },
+  { key: 'queued', label: 'Queued for processing' },
+  { key: 'analyzing', label: 'Understanding your sketch...' },
+  { key: 'searching', label: 'Searching 3D assets...' },
+  { key: 'found', label: 'Best matching model found.' },
+  { key: 'downloading', label: 'Preparing model...' },
+  { key: 'importing', label: 'Loading model into workspace...' },
+  { key: 'generating', label: 'No suitable asset found. Generating a new model...' },
+  { key: 'processing', label: 'Optimizing geometry...' },
+  { key: 'completed', label: 'Model ready.' },
+  { key: 'ready', label: 'Model ready.' },
 ];
 
 export const GenerationStatus: React.FC<GenerationStatusProps> = ({
@@ -30,7 +36,7 @@ export const GenerationStatus: React.FC<GenerationStatusProps> = ({
 
   useEffect(() => {
     let timer: any = null;
-    if (status && status !== 'completed' && status !== 'failed') {
+    if (status && status !== 'completed' && status !== 'ready' && status !== 'failed' && status !== 'idle') {
       const start = Date.now();
       timer = setInterval(() => {
         setElapsedSeconds(Math.floor((Date.now() - start) / 1000));
@@ -85,7 +91,7 @@ export const GenerationStatus: React.FC<GenerationStatusProps> = ({
   if (!status) return null;
 
   const currentStageIndex = STAGES.findIndex((s) => s.key === status);
-  const isWorking = status !== 'completed' && status !== 'failed';
+  const isWorking = status !== 'completed' && status !== 'ready' && status !== 'failed' && status !== 'idle';
 
   return (
     <div

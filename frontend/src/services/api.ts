@@ -103,3 +103,43 @@ export async function refineScene(
   });
   return handleResponse<{ job_id: string; status: string; updated_spec?: SceneSpec }>(res);
 }
+
+export async function searchAssets(params: {
+  object_type?: string;
+  search_terms?: string[];
+  features?: string[];
+  style?: string[];
+}): Promise<{ results: import('../types/scene').AssetSearchResult[]; total: number; best_match?: import('../types/scene').AssetSearchResult }> {
+  const res = await fetch(`${API_BASE}/api/assets/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return handleResponse(res);
+}
+
+export async function importAsset(asset: import('../types/scene').AssetSearchResult): Promise<{
+  success: boolean;
+  asset_id: string;
+  provider: string;
+  model_url: string;
+  cached: boolean;
+  metadata: import('../types/scene').AssetMetadata;
+}> {
+  const res = await fetch(`${API_BASE}/api/assets/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      provider: asset.provider,
+      asset_id: asset.id,
+      download_url: asset.download_url,
+      name: asset.name,
+      author: asset.author,
+      license: asset.license,
+      source_url: asset.preview_url,
+      attribution: asset.attribution,
+    }),
+  });
+  return handleResponse(res);
+}
+

@@ -3,12 +3,14 @@ import time
 import logging
 from typing import Optional, Tuple
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageOps
+import numpy as np
 
 import torch
 from app.config import settings
 from app.models.scene_spec import SceneSpec, SceneGeometry
-from app.utils.validation import validate_and_parse_scene_spec
+from app.models.asset import GemmaAnalysisResult
+from app.utils.validation import validate_and_parse_scene_spec, validate_and_parse_gemma_analysis
 
 logger = logging.getLogger("sketchforge.gemma")
 
@@ -31,6 +33,34 @@ The JSON schema must strictly conform to:
   },
   "generation_prompt": "A complete, high-fidelity description tailored for 3D reconstruction"
 }
+"""
+
+GEMMA_ANALYSIS_SYSTEM_PROMPT = """You are the visual reasoning layer of SketchForge.
+Your task is to examine a rough 2D sketch and optional natural language description, and identify what object the user wants.
+Do NOT generate 3D geometry or mesh vertices at this stage.
+Output ONLY a strict structured JSON object conforming to:
+{
+  "object_type": "office chair",
+  "canonical_name": "office chair",
+  "search_terms": [
+    "office chair",
+    "desk chair",
+    "computer chair",
+    "ergonomic chair"
+  ],
+  "style": [
+    "modern",
+    "black"
+  ],
+  "features": [
+    "armrests",
+    "five wheels",
+    "high backrest"
+  ],
+  "approximate_scale": "human-sized",
+  "confidence": 0.91
+}
+Do not expose chain-of-thought. Output valid JSON only.
 """
 
 class GemmaService:
@@ -136,7 +166,7 @@ class GemmaService:
 
         # Check for Mock Mode or offline fallback
         if settings.MOCK_MODE or not torch.cuda.is_available():
-            spec = self._generate_mock_spec(description, existing_spec, refinement_prompt)
+            spec = self._generate_mock_spec(image_path, description, existing_spec, refinement_prompt)
             duration = time.time() - start_time
             logger.info(f"Gemma mock inference completed in {duration:.2f}s")
             return spec
@@ -233,16 +263,108 @@ class GemmaService:
             logger.exception(f"Gemma inference error: {e}")
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            return self._generate_mock_spec(description, existing_spec, refinement_prompt)
+            return self._generate_mock_spec(image_path, description, existing_spec, refinement_prompt)
+
+    def _analyze_image_geometry(self, image_path: Optional[Path]) -> dict:
+        """
+        Extracts structural geometric cues from the 2D sketch silhouette:
+        - Aspect ratio (width / height)
+        - 3-tier vertical mass distribution (top, middle, bottom)
+        - Slender stem detection (hallmark of lamps, goblets, pedestals)
+        """
+        if not image_path or not image_path.exists():
+            return {
+                "aspect_ratio": 1.0,
+                "is_wide": False,
+                "is_tall": False,
+                "is_lamp": False,
+                "is_table": False,
+                "is_mug": False,
+            }
+
+        try:
+            with Image.open(image_path) as img:
+                gray = img.convert("L")
+                inv = ImageOps.invert(gray)
+                arr = np.array(inv)
+                bbox = inv.point(lambda p: 255 if p > 30 else 0).getbbox()
+
+                if not bbox:
+                    return {
+                        "aspect_ratio": 1.0,
+                        "is_wide": False,
+                        "is_tall": False,
+                        "is_lamp": False,
+                        "is_table": False,
+                        "is_mug": False,
+                    }
+
+                min_x, min_y, max_x, max_y = bbox
+                w = max(1, max_x - min_x)
+                h = max(1, max_y - min_y)
+                aspect = w / h
+
+                cropped = arr[min_y:max_y, min_x:max_x]
+                ch, cw = cropped.shape
+                
+                # Split into 3 vertical zones: top third, middle third, bottom third
+                t_end = max(1, ch // 3)
+                m_end = max(2, (2 * ch) // 3)
+                top_zone = cropped[:t_end, :]
+                mid_zone = cropped[t_end:m_end, :]
+                bot_zone = cropped[m_end:, :]
+
+                top_m = float(top_zone.sum())
+                mid_m = float(mid_zone.sum())
+                bot_m = float(bot_zone.sum())
+                tot_m = top_m + mid_m + bot_m + 1e-5
+
+                top_pct = top_m / tot_m
+                mid_pct = mid_m / tot_m
+                bot_pct = bot_m / tot_m
+
+                # Lamp signature: Slender center stem with prominent lampshade on top and weighted base at bottom
+                # i.e., Middle zone has significantly less stroke mass than top or bottom (mid_pct <= 0.20 and top_pct >= 0.35)
+                is_lamp = (mid_pct < 0.22 and top_pct > 0.35 and aspect < 1.1)
+
+                # Table signature: Dominant wide horizontal surface (aspect > 1.25)
+                is_table = (aspect > 1.25)
+
+                # Mug signature: Compact / square aspect ratio, balanced middle mass, not slender stem
+                is_mug = (0.75 <= aspect <= 1.25 and mid_pct >= 0.25 and not is_lamp)
+
+                return {
+                    "aspect_ratio": aspect,
+                    "is_wide": aspect > 1.25,
+                    "is_tall": aspect < 0.85,
+                    "top_pct": top_pct,
+                    "mid_pct": mid_pct,
+                    "bot_pct": bot_pct,
+                    "is_lamp": is_lamp,
+                    "is_table": is_table,
+                    "is_mug": is_mug,
+                }
+        except Exception as e:
+            logger.warning(f"Error computing visual geometry heuristics: {e}")
+            return {
+                "aspect_ratio": 1.0,
+                "is_wide": False,
+                "is_tall": False,
+                "is_lamp": False,
+                "is_table": False,
+                "is_mug": False,
+            }
 
     def _generate_mock_spec(
         self,
+        image_path: Optional[Path] = None,
         description: Optional[str] = None,
         existing_spec: Optional[SceneSpec] = None,
         refinement_prompt: Optional[str] = None
     ) -> SceneSpec:
         """
-        Deterministic, intelligent SceneSpec generation for development / mock mode.
+        Deterministic, intelligent SceneSpec generation using multi-modal reasoning:
+        Uses both the text description and sketch silhouette geometry cues.
         """
         # If refining an existing spec
         if existing_spec and refinement_prompt:
@@ -252,11 +374,11 @@ class GemmaService:
                 new_spec.geometry = SceneGeometry()
 
             if "taller" in p_lower or "longer" in p_lower:
-                new_spec.geometry.height = (new_spec.geometry.height or 0.9) * 1.3
+                new_spec.geometry.height = round((new_spec.geometry.height or 0.9) * 1.3, 2)
                 if new_spec.geometry.back_height:
-                    new_spec.geometry.back_height *= 1.35
+                    new_spec.geometry.back_height = round(new_spec.geometry.back_height * 1.35, 2)
             if "wider" in p_lower:
-                new_spec.geometry.width = (new_spec.geometry.width or 0.5) * 1.3
+                new_spec.geometry.width = round((new_spec.geometry.width or 0.5) * 1.3, 2)
             if "armrest" in p_lower:
                 if "armrests" not in new_spec.components:
                     new_spec.components.append("armrests")
@@ -264,44 +386,108 @@ class GemmaService:
                 new_spec.material = "brushed aluminum metal"
             if "wood" in p_lower:
                 new_spec.material = "polished oak wood"
+            if "ceramic" in p_lower or "clay" in p_lower:
+                new_spec.material = "matte ceramic"
 
             new_spec.generation_prompt = f"{existing_spec.generation_prompt or existing_spec.object}, refined with: {refinement_prompt}"
             return new_spec
 
-        # Detect object category from description
+        # 1. Inspect user text prompt keywords
         desc_lower = (description or "").lower()
-        if "table" in desc_lower:
+
+        # 2. Extract visual silhouette geometry features from the sketch
+        geom = self._analyze_image_geometry(image_path)
+        aspect = geom.get("aspect_ratio", 1.0)
+        is_wide = geom.get("is_wide", False)
+        is_tall = geom.get("is_tall", False)
+        top_heavy = geom.get("top_heavy", False)
+        bottom_heavy = geom.get("bottom_heavy", False)
+
+        # Classify based on combination of prompt and sketch shape
+        if desc_lower:
+            # Extract main object noun from user description
+            import re
+            cleaned_desc = re.sub(r'^(a|an|the)\s+', '', desc_lower.strip())
+            words = cleaned_desc.split()
+            # Object name is typically the primary noun/phrase
+            obj_name = words[0] if len(words) == 1 else " ".join(words[:3])
+
+            # Determine material from prompt
+            material = "standard composite"
+            if any(k in desc_lower for k in ["wood", "wooden", "timber", "oak", "pine"]):
+                material = "natural polished wood"
+            elif any(k in desc_lower for k in ["metal", "steel", "iron", "aluminum", "metallic", "gold", "silver", "chrome"]):
+                material = "brushed metallic alloy"
+            elif any(k in desc_lower for k in ["glass", "crystal", "transparent"]):
+                material = "translucent tempered glass"
+            elif any(k in desc_lower for k in ["ceramic", "porcelain", "clay", "pottery"]):
+                material = "glazed ceramic"
+            elif any(k in desc_lower for k in ["plastic", "polymer", "resin"]):
+                material = "matte molded polymer"
+            elif any(k in desc_lower for k in ["stone", "marble", "granite", "rock"]):
+                material = "cut polished marble"
+            elif any(k in desc_lower for k in ["fabric", "leather", "cloth"]):
+                material = "textured leather upholstery"
+
+            # Determine style
+            style = "custom artisan"
+            if any(k in desc_lower for k in ["modern", "minimalist", "sleek"]):
+                style = "modern minimalist"
+            elif any(k in desc_lower for k in ["vintage", "retro", "classic", "antique"]):
+                style = "vintage handcrafted"
+            elif any(k in desc_lower for k in ["futuristic", "cyberpunk", "sci-fi"]):
+                style = "futuristic geometric"
+
+            return SceneSpec(
+                object=cleaned_desc,
+                confidence=0.95,
+                style=style,
+                material=material,
+                components=[f"{cleaned_desc} primary structure", "surface boundary", "structural base"],
+                geometry=SceneGeometry(
+                    width=round(max(0.4, min(2.5, aspect * 0.8)), 2),
+                    depth=round(max(0.3, min(2.0, aspect * 0.6)), 2),
+                    height=round(max(0.4, min(2.5, 1.0 / (aspect + 1e-4) * 0.8)), 2)
+                ),
+                generation_prompt=f"A high-fidelity 3D model of {cleaned_desc} with {style} aesthetic and {material} finish."
+            )
+
+        # If no prompt was provided, deduce from sketch geometric cues
+        if geom.get("is_lamp"):
+            # Slender stem + top shade + weighted base -> Studio / Bedside Lamp
+            return SceneSpec(
+                object="lamp",
+                confidence=0.95,
+                style="contemporary studio",
+                material="frosted glass and brass",
+                components=["cylindrical lampshade", "slender brass stem", "circular weighted base"],
+                geometry=SceneGeometry(width=0.35, depth=0.35, height=round(max(0.5, 1.0 / (aspect + 1e-4) * 0.4), 2)),
+                generation_prompt="A minimalist studio bedside lamp with a warm frosted shade and brass base."
+            )
+        elif geom.get("is_table"):
+            # Wide horizontal aspect ratio -> Table / Desk
             return SceneSpec(
                 object="table",
                 confidence=0.94,
                 style="modern minimalist",
                 material="natural oak wood",
                 components=["tabletop plane", "four cylindrical legs", "reinforcement aprons"],
-                geometry=SceneGeometry(width=1.2, depth=0.8, height=0.75),
+                geometry=SceneGeometry(width=round(max(0.8, aspect * 0.7), 2), depth=0.8, height=0.75),
                 generation_prompt="A modern dining table with a thick oak surface and four sturdy tapered legs."
             )
-        elif "lamp" in desc_lower:
-            return SceneSpec(
-                object="lamp",
-                confidence=0.91,
-                style="contemporary studio",
-                material="frosted glass and brass",
-                components=["cylindrical lampshade", "slender brass stem", "circular weighted base"],
-                geometry=SceneGeometry(width=0.35, depth=0.35, height=0.6),
-                generation_prompt="A minimalist studio bedside lamp with a warm frosted shade and brass base."
-            )
-        elif "mug" in desc_lower or "cup" in desc_lower:
+        elif geom.get("is_mug"):
+            # Compact / square with centered base -> Mug / Vessel
             return SceneSpec(
                 object="mug",
                 confidence=0.93,
                 style="artisan ceramic",
                 material="matte stoneware ceramic",
                 components=["cylindrical cup body", "curved ergonomic handle", "reinforced base rim"],
-                geometry=SceneGeometry(width=0.12, depth=0.09, height=0.1),
+                geometry=SceneGeometry(width=0.12, depth=0.09, height=0.12),
                 generation_prompt="A ceramic stoneware coffee mug with smooth matte glaze and ergonomic loop handle."
             )
         else:
-            # Default object: chair
+            # Default or tall balanced silhouette -> Chair / Seating
             return SceneSpec(
                 object="chair",
                 confidence=0.92,
@@ -312,4 +498,192 @@ class GemmaService:
                 generation_prompt="A handcrafted wooden chair with four tapered legs and a tall slatted backrest."
             )
 
+    def analyze_sketch_understanding(
+        self,
+        image_path: Optional[Path],
+        description: Optional[str] = None
+    ) -> GemmaAnalysisResult:
+        """
+        Step 1 Visual Reasoning Layer:
+        Uses Gemma 4 E4B to understand the sketch and natural language description.
+        Generates structured JSON describing object type, canonical name, search terms,
+        style, and features without generating 3D mesh geometry.
+        """
+        start_time = time.time()
+        logger.info(f"Gemma visual understanding started. Image: {image_path}, Description: {description}")
+
+        # Check mock mode or no CUDA
+        if settings.MOCK_MODE or not torch.cuda.is_available():
+            result = self._generate_mock_analysis(image_path, description)
+            logger.info(f"Gemma mock visual understanding completed in {time.time() - start_time:.2f}s")
+            return result
+
+        try:
+            processor, model = self.get_model()
+            user_text_parts = []
+            if description:
+                user_text_parts.append(f"User description: {description.strip()}")
+            user_text_parts.append("Examine the attached sketch. Output the complete visual analysis JSON with normalized search terms.")
+
+            user_content = "\n".join(user_text_parts)
+            image = Image.open(image_path).convert("RGB")
+
+            messages = [
+                {"role": "system", "content": GEMMA_ANALYSIS_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": user_content}
+                    ]
+                }
+            ]
+
+            inputs = processor.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt"
+            )
+
+            device = next(model.parameters()).device
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+
+            with torch.no_grad():
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=384,
+                    temperature=0.2,
+                    do_sample=False
+                )
+
+            input_len = inputs["input_ids"].shape[-1]
+            generated_ids = outputs[0][input_len:]
+            raw_text = processor.decode(generated_ids, skip_special_tokens=True)
+
+            res, error = validate_and_parse_gemma_analysis(raw_text)
+            if not res:
+                logger.warning(f"Gemma visual understanding parse error ({error}). Falling back to heuristic analysis.")
+                return self._generate_mock_analysis(image_path, description)
+
+            return res
+
+        except Exception as e:
+            logger.warning(f"Gemma visual analysis error: {e}. Falling back to deterministic reasoning.")
+            return self._generate_mock_analysis(image_path, description)
+
+    def _generate_mock_analysis(
+        self,
+        image_path: Optional[Path],
+        description: Optional[str] = None
+    ) -> GemmaAnalysisResult:
+        """
+        Deterministic normalization and search term generator for Step 1.
+        Converts user description & sketch silhouette into normalized search queries.
+        """
+        import re
+        desc_lower = (description or "").lower().strip()
+        geom = self._analyze_image_geometry(image_path)
+
+        # Detect primary object
+        object_type = "office chair"
+        canonical = "chair"
+        styles = ["modern"]
+        features = ["support structure"]
+
+        # Parse keywords from description
+        if any(w in desc_lower for w in ["lamp", "light", "lantern", "desk lamp"]):
+            object_type = "desk lamp"
+            canonical = "lamp"
+            features = ["round base", "lampshade", "slender stem"]
+            styles = ["modern", "minimalist"]
+        elif any(w in desc_lower for w in ["table", "desk", "dining table", "coffee table"]):
+            object_type = "dining table"
+            canonical = "table"
+            features = ["four legs", "wooden tabletop", "support aprons"]
+            styles = ["wooden", "modern"]
+        elif any(w in desc_lower for w in ["chair", "office chair", "seat", "stool", "armchair"]):
+            object_type = "office chair"
+            canonical = "chair"
+            features = ["armrests", "five wheels", "high backrest"]
+            styles = ["modern", "ergonomic"]
+        elif geom.get("is_lamp"):
+            object_type = "desk lamp"
+            canonical = "lamp"
+            features = ["round base", "lampshade"]
+        elif geom.get("is_table"):
+            object_type = "table"
+            canonical = "table"
+            features = ["tabletop", "legs"]
+        elif geom.get("is_mug"):
+            object_type = "coffee mug"
+            canonical = "mug"
+            features = ["handle", "cup body"]
+            styles = ["ceramic"]
+
+        # Style detection from description
+        if "wood" in desc_lower or "wooden" in desc_lower:
+            styles.append("wooden")
+        if "metal" in desc_lower or "steel" in desc_lower:
+            styles.append("metal")
+        if "black" in desc_lower:
+            styles.append("black")
+        if "white" in desc_lower:
+            styles.append("white")
+        if "vintage" in desc_lower:
+            styles.append("vintage")
+
+        # Feature detection from description
+        if "armrest" in desc_lower:
+            if "armrests" not in features:
+                features.append("armrests")
+        if "wheel" in desc_lower:
+            if "wheels" not in features:
+                features.append("wheels")
+        if "tall" in desc_lower or "high" in desc_lower:
+            if "high backrest" not in features and canonical == "chair":
+                features.append("high backrest")
+        if "round" in desc_lower:
+            if "round base" not in features and canonical == "lamp":
+                features.append("round base")
+
+        # Generate normalized search terms as required in Step 3
+        search_terms = []
+        # 1. Combination of primary style + canonical
+        for s in styles:
+            search_terms.append(f"{s} {canonical}")
+        # 2. Object type directly
+        search_terms.append(object_type)
+        # 3. Canonical + feature
+        for f in features:
+            search_terms.append(f"{canonical} {f}")
+        # 4. Synonyms
+        if canonical == "chair":
+            search_terms.extend(["desk chair", "computer chair", "ergonomic chair"])
+        elif canonical == "table":
+            search_terms.extend(["wooden desk", "dining table", "study table"])
+        elif canonical == "lamp":
+            search_terms.extend(["modern lamp", "table lamp", "study light"])
+
+        # Deduplicate preserving order
+        seen = set()
+        dedup_terms = []
+        for t in search_terms:
+            t_clean = t.strip().lower()
+            if t_clean and t_clean not in seen:
+                seen.add(t_clean)
+                dedup_terms.append(t_clean)
+
+        return GemmaAnalysisResult(
+            object_type=object_type,
+            canonical_name=canonical,
+            search_terms=dedup_terms[:6],
+            style=list(set(styles)),
+            features=features,
+            approximate_scale="human-sized",
+            confidence=0.92
+        )
+
 gemma_service = GemmaService()
+

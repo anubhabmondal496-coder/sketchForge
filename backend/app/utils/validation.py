@@ -53,3 +53,27 @@ def validate_and_parse_scene_spec(raw_output: str) -> Tuple[Optional[SceneSpec],
         return spec, None
     except Exception as e:
         return None, f"SceneSpec schema validation failed: {str(e)}"
+
+def validate_and_parse_gemma_analysis(raw_output: str):
+    """
+    Validates model output string against GemmaAnalysisResult schema.
+    Returns (GemmaAnalysisResult, None) on success or (None, error_message) on failure.
+    """
+    from app.models.asset import GemmaAnalysisResult
+    extracted_dict = extract_json_from_text(raw_output)
+    if not extracted_dict:
+        return None, "No valid JSON structure found in model visual analysis output."
+
+    try:
+        if "object_type" not in extracted_dict:
+            extracted_dict["object_type"] = extracted_dict.get("object", "object")
+        if "canonical_name" not in extracted_dict:
+            extracted_dict["canonical_name"] = extracted_dict["object_type"]
+        if "search_terms" not in extracted_dict or not extracted_dict["search_terms"]:
+            extracted_dict["search_terms"] = [extracted_dict["object_type"]]
+
+        result = GemmaAnalysisResult.model_validate(extracted_dict)
+        return result, None
+    except Exception as e:
+        return None, f"GemmaAnalysisResult validation failed: {str(e)}"
+

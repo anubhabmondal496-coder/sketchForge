@@ -8,6 +8,7 @@ interface RefinementInputProps {
   history: RefinementHistoryEntry[];
   currentVersion: number;
   onSelectVersion: (version: number) => void;
+  isStaticAsset?: boolean;
 }
 
 const REFINEMENT_PRESETS = [
@@ -24,6 +25,7 @@ export const RefinementInput: React.FC<RefinementInputProps> = ({
   history,
   currentVersion,
   onSelectVersion,
+  isStaticAsset = false,
 }) => {
   const [refinementText, setRefinementText] = useState('');
 
@@ -81,6 +83,22 @@ export const RefinementInput: React.FC<RefinementInputProps> = ({
           </div>
         )}
       </div>
+
+      {isStaticAsset && (
+        <div
+          style={{
+            fontSize: '11px',
+            color: '#fbbf24',
+            background: 'rgba(245, 158, 11, 0.1)',
+            border: '1px solid rgba(245, 158, 11, 0.25)',
+            borderRadius: '4px',
+            padding: '6px 10px',
+            lineHeight: 1.4,
+          }}
+        >
+          <strong>Notice (Static 3D Asset):</strong> Direct mesh topology deformation on imported models is restricted. Submitting a refinement will regenerate a procedural AI model via Gemma &amp; TripoSR with updated geometry.
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '8px' }}>
         <input
