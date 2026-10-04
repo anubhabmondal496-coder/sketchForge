@@ -7,6 +7,14 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    proxy: {
+      '/health': 'http://localhost:8000',
+      '/analyze': 'http://localhost:8000',
+      '/generate': 'http://localhost:8000',
+      '/job': 'http://localhost:8000',
+      '/model': 'http://localhost:8000',
+      '/refine': 'http://localhost:8000',
+    },
   },
   build: {
     outDir: 'dist',
